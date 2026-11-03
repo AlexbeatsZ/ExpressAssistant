@@ -18,7 +18,7 @@ A local-first Android app that aggregates express deliveries from different plat
 - Express calendar: month view marking today and estimated arrival dates
 - AI-powered transport progress and estimated delivery time (uses your saved address)
 - Home address in settings with auto-locate or manual input
-- Local CLI and MCP-like JSON-RPC interface for integrations
+- PC server edition (`server/`): fetches Xiaomi / JD / Taobao / Pinduoduo on its own, shows pickup codes in a web page any device can open, and exposes REST + MCP for AI
 - No ads, no analytics, all data stays on device
 
 ## Build
@@ -85,7 +85,7 @@ This project is not affiliated with or endorsed by Xiaomi, Cainiao, Taobao, JD.c
 - 快递日历：月历视图，标记今天与预计到达日期
 - AI 运输进度与预计送达时间（结合你保存的地址）
 - 设置里的“我的地址”：自动定位或手动填写
-- 本地 CLI 与 MCP 风格 JSON-RPC 接口，方便外部集成
+- PC 服务器版（`server/`）：独立抓取小米 / 京东 / 淘宝 / 拼多多，网页集中显示取件码，其他设备浏览器即可查看，并提供 REST 与 MCP 接口给 AI 读取
 - 无广告、无统计、数据只存在本地
 
 ## 构建

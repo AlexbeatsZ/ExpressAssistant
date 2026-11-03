@@ -82,14 +82,10 @@
 - **商品短名**：`GoodsPresentation.batchShorten` 批量（每批 8 个）让 AI 把长名改写成"厂商/品牌+型号+产品名"≤12 字（提示词明确保留型号如 MM3A），无 key 时规则兜底（去【】（）括号、截 12 字）
 - 日报：`DailyReporter` 只把在途件交给 AI
 
-## 五、本地接口（CLI / MCP）
+## 五、AI 接口（PC 服务器版）
 
-手机内 `ApiServer`（NanoHTTPD）监听 `127.0.0.1:8765`：
-
-```bash
-adb forward tcp:8765 tcp:8765
-python3 tools/express-cli.py list / detail / sync / track / rename / export / mcp ...
-```
+手机端不再提供本地接口（原 `127.0.0.1:8765` NanoHTTPD + `tools/express-cli.py` 已删除）。
+AI 读取与网页查看由 `server/` 的 PC 服务器版提供：它自己登录并抓取四个渠道，接口见 [server/README.md](../server/README.md)。
 
 ## 六、快递100 与无障碍（兜底）
 

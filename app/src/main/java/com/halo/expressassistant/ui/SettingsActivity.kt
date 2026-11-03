@@ -26,7 +26,6 @@ import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.TextInputLayout
-import com.halo.expressassistant.ApiServer
 import com.halo.expressassistant.R
 import com.halo.expressassistant.ai.Markdown
 import com.halo.expressassistant.api.XiaomiApi
@@ -70,7 +69,6 @@ class SettingsActivity : AppCompatActivity() {
         binding.rowWidget.setOnClickListener { showWidgetSheet() }
         binding.rowPoll.setOnClickListener { showPollSheet() }
         binding.rowUpdate.setOnClickListener { showUpdateSheet() }
-        binding.rowLocalApi.setOnClickListener { showLocalApiSheet() }
         binding.rowMore.setOnClickListener { showMoreSheet() }
         binding.rowAbout.setOnClickListener { showAboutSheet() }
         binding.rowSupport.setOnClickListener { showSupportDialog() }
@@ -113,11 +111,6 @@ class SettingsActivity : AppCompatActivity() {
         binding.hiddenSummary.text = "${Store.xiaomiHidden(this).size} 个已删除"
         val poll = Store.pollIntervalMin(this)
         binding.pollSummary.text = if (poll <= 0) "默认关闭" else "每 $poll 分钟 · 仅轮询有在途跟踪件的平台"
-        binding.localApiSummary.text = if (ApiServer.isRunning()) {
-            "运行中 · 127.0.0.1:${ApiServer.PORT}"
-        } else {
-            "已关闭"
-        }
         binding.addressSummary.text = addressSummaryLabel()
     }
 
@@ -621,10 +614,6 @@ class SettingsActivity : AppCompatActivity() {
 
             - 桌面小组件：动态行列、状态筛选、暖纸主题
             - 主题：莫奈取色 / 温暖纸感 / 自定义，纸感强度与昼夜可分别设置
-
-            ## 本地接口
-
-            手机内提供 `127.0.0.1:8765` 的 CLI / MCP 接口，可让命令行或外部 AI 访问你的快递数据；钥匙只在你手里。
 
             ---
 
@@ -1240,76 +1229,6 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     /* ─────────────── 本地接口 ─────────────── */
-
-    private fun showLocalApiSheet() {
-        val (sheet, container) = Sheets.create(this, "本地接口（CLI / MCP）")
-        container.addView(
-            TextView(this).apply {
-                text = "仅监听手机本机 127.0.0.1:${ApiServer.PORT}，通过 adb 端口转发后，可由命令行或 AI 调用。不会暴露到局域网。"
-                textSize = 13f
-                setTextColor(onSurfaceVariant())
-                setPadding(0, 4, 0, dp(14))
-                setLineSpacing(0f, 1.2f)
-            }
-        )
-        container.addView(
-            TextView(this).apply {
-                text = "使用方式"
-                textSize = 16f
-                typeface = Typeface.DEFAULT_BOLD
-                setPadding(0, dp(6), 0, dp(6))
-            }
-        )
-        val usage = "adb forward tcp:${ApiServer.PORT} tcp:${ApiServer.PORT}\n\n" +
-            "python3 tools/express-cli.py list\n" +
-            "python3 tools/express-cli.py mcp summarize '{\"question\":\"汇总我的快递\"}'"
-        container.addView(
-            TextView(this).apply {
-                text = usage
-                textSize = 12f
-                typeface = Typeface.MONOSPACE
-                setTextColor(MaterialColors.getColor(this@SettingsActivity, com.google.android.material.R.attr.colorOnSurfaceVariant, 0))
-                setBackgroundColor(MaterialColors.getColor(this@SettingsActivity, com.google.android.material.R.attr.colorSurfaceContainerLow, 0))
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                setLineSpacing(0f, 1.2f)
-            }
-        )
-
-        val switchRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(14), 0, 0)
-        }
-        switchRow.addView(
-            TextView(this).apply {
-                text = "启用本地接口"
-                textSize = 16f
-                typeface = Typeface.DEFAULT_BOLD
-            },
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        val sw = SwitchMaterial(this).apply {
-            isChecked = Store.localApiEnabled(this@SettingsActivity)
-        }
-        switchRow.addView(sw)
-        container.addView(switchRow)
-
-        val status = TextView(this).apply {
-            text = if (ApiServer.isRunning()) "状态：运行中" else "状态：已关闭"
-            textSize = 13f
-            setTextColor(onSurfaceVariant())
-            setPadding(0, dp(4), 0, dp(10))
-        }
-        container.addView(status)
-
-        sw.setOnCheckedChangeListener { _, checked ->
-            Store.saveLocalApiEnabled(this@SettingsActivity, checked)
-            if (checked) ApiServer.start(this@SettingsActivity) else ApiServer.stop()
-            status.text = if (ApiServer.isRunning()) "状态：运行中" else "状态：已关闭"
-            refreshButtons()
-        }
-        sheet.show()
-    }
 
     /* ─────────────── 手机号管理（并入小米登录：按指定账号） ─────────────── */
 

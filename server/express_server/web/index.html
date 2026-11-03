@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>快递助手</title>
+<style>
+:root{--bg:#f6f3ee;--card:#fffdf9;--ink:#26221d;--sub:#776f66;--line:#e6dfd4;--accent:#b4552d;--accent-ink:#fff;--chip:#efe8dd;--pick:#fff1d6;--pick-ink:#8a4b00;--bad:#b3261e;--ok:#2e7d4f;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#1b1916;--card:#25221e;--ink:#eee7dd;--sub:#a59c90;--line:#3a352f;--accent:#e38a5e;--accent-ink:#1b1916;--chip:#34302a;--pick:#3d2f17;--pick-ink:#ffcf85;--bad:#f2b8b5;--ok:#8fd3a8;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+button{font:inherit;color:inherit;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:7px 12px;cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+input,textarea,select{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px;width:100%}
+.wrap{max-width:760px;margin:0 auto;padding:0 16px 40px}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:14px 0 8px}
+.bar{display:flex;align-items:center;gap:8px}
+.bar h1{font-size:20px;margin:0;flex:1;letter-spacing:.5px}
+.muted{color:var(--sub);font-size:13px}
+.tabs{display:flex;gap:6px;overflow-x:auto;padding:10px 0 4px;scrollbar-width:none}
+.tabs button{white-space:nowrap;border-radius:999px;padding:5px 13px}
+.tabs button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.search{margin-top:6px}
+.list{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;gap:12px;cursor:pointer}
+.card img{width:58px;height:58px;border-radius:10px;object-fit:cover;flex:none;background:var(--chip)}
+.card .main{min-width:0;flex:1}
+.title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:4px}
+.chip{font-size:12px;background:var(--chip);border-radius:999px;padding:1px 9px;color:var(--sub)}
+.chip.state{color:var(--ink)}
+.chip.bad{color:var(--bad)}
+.latest{color:var(--sub);font-size:13px;margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.code{display:inline-flex;align-items:baseline;gap:8px;background:var(--pick);color:var(--pick-ink);border-radius:12px;padding:4px 12px;margin:2px 0 6px}
+.code b{font:700 24px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:1.5px}
+.code.big b{font-size:38px}
+.empty{text-align:center;color:var(--sub);padding:60px 0}
+dialog{border:none;border-radius:18px;padding:0;background:var(--card);color:var(--ink);width:min(680px,calc(100vw - 24px));max-height:calc(100vh - 40px)}
+dialog::backdrop{background:rgba(0,0,0,.4)}
+.dlg{padding:16px 18px 20px}
+.dlg h2{font-size:18px;margin:0 0 6px}
+.close{float:right;border:none;background:none;font-size:22px;padding:0 4px;line-height:1}
+.timeline{list-style:none;margin:14px 0 0;padding:0}
+.timeline li{position:relative;padding:0 0 14px 18px;border-left:2px solid var(--line);margin-left:5px}
+.timeline li::before{content:"";position:absolute;left:-6px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--line)}
+.timeline li:first-child::before{background:var(--accent)}
+.timeline .t{font-size:12px;color:var(--sub)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.section{margin-top:18px}
+.section h3{font-size:15px;margin:0 0 8px}
+.acc{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.err{color:var(--bad);font-size:13px;word-break:break-all}
+.screen{position:relative;display:flex;justify-content:center;background:#000;border-radius:12px;overflow:hidden;margin-top:10px}
+.screen img{max-width:100%;max-height:62vh;display:block;cursor:crosshair;touch-action:none;user-select:none}
+pre{background:var(--chip);border-radius:10px;padding:10px;overflow-x:auto;font-size:12px;white-space:pre-wrap;word-break:break-all}
+.gate{max-width:380px;margin:18vh auto 0;padding:0 16px}
+</style>
+</head>
+<body>
+<div id="gate" class="gate" hidden>
+  <h1 style="font-size:22px">快递助手</h1>
+  <p class="muted">输入服务器启动时显示的访问令牌（保存在本浏览器）。</p>
+  <input id="tokenInput" placeholder="访问令牌" autocomplete="off">
+  <div class="row"><button class="primary" id="tokenSave">进入</button></div>
+  <p id="gateErr" class="err"></p>
+</div>
+
+<div id="app" class="wrap" hidden>
+  <header>
+    <div class="bar">
+      <h1>快递助手</h1>
+      <button id="syncBtn" class="primary">同步</button>
+      <button id="setBtn" title="账号与设置">账号</button>
+    </div>
+    <div id="syncInfo" class="muted"></div>
+    <div class="tabs" id="tabs"></div>
+    <input id="q" class="search" placeholder="搜索商品 / 单号 / 取件码" type="search">
+  </header>
+  <div id="list" class="list"></div>
+</div>
+
+<dialog id="detail"><div class="dlg" id="detailBody"></div></dialog>
+<dialog id="settings"><div class="dlg" id="settingsBody"></div></dialog>
+<dialog id="login"><div class="dlg" id="loginBody"></div></dialog>
+
+<script>
+const TABS = [["pickup","待取件"],["active","在途"],["abnormal","异常"],["done","已完成"],["all","全部"]];
+const SRC = {xiaomi:"小米",jd:"京东",taobao:"淘宝",pdd:"拼多多"};
+let token = "", rows = [], tab = "", status = {};
+try { token = localStorage.getItem("ea_token") || ""; } catch (e) {}
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(path, opt = {}) {
+  const r = await fetch(path, {...opt, headers: {"Authorization": "Bearer " + token, "Content-Type": "application/json", ...(opt.headers || {})}});
+  if (r.status === 401) { showGate("令牌不正确"); throw new Error("unauthorized"); }
+  if (!r.ok && r.status !== 409) throw new Error(await r.text());
+  return r.headers.get("content-type")?.includes("json") ? r.json() : r;
+}
+function showGate(msg) { $("app").hidden = true; $("gate").hidden = false; $("gateErr").textContent = msg || ""; }
+$("tokenSave").onclick = () => { token = $("tokenInput").value.trim(); try { localStorage.setItem("ea_token", token); } catch (e) {} boot(); };
+$("tokenInput").onkeydown = e => { if (e.key === "Enter") $("tokenSave").click(); };
+
+function fmtTime(ms) { if (!ms) return ""; const d = new Date(ms); return `${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
+
+async function boot() {
+  if (!token) return showGate();
+  try { rows = await api("/api/express"); } catch (e) { return; }
+  $("gate").hidden = true; $("app").hidden = false;
+  if (!tab) tab = rows.some(r => r.section === "pickup") ? "pickup" : "active";
+  render(); refreshStatus();
+}
+
+function filtered() {
+  const q = $("q").value.trim().toLowerCase();
+  return rows.filter(r => {
+    const ok = tab === "all" || (tab === "active" ? !["done","pickup","abnormal"].includes(r.section) : r.section === tab);
+    if (!ok) return false;
+    return !q || [r.goodsName, r.mailNo, r.companyName, r.pickupCode, r.latestText].some(v => (v || "").toLowerCase().includes(q));
+  });
+}
+
+function render() {
+  const count = k => rows.filter(r => k === "all" || (k === "active" ? !["done","pickup","abnormal"].includes(r.section) : r.section === k)).length;
+  $("tabs").innerHTML = TABS.map(([k, n]) => `<button data-k="${k}" class="${k === tab ? "on" : ""}">${n} ${count(k)}</button>`).join("");
+  $("tabs").querySelectorAll("button").forEach(b => b.onclick = () => { tab = b.dataset.k; render(); });
+  const list = filtered();
+  $("list").innerHTML = list.length ? list.map(card).join("") : `<div class="empty">${tab === "pickup" ? "没有待取件的快递" : "这里没有快递"}</div>`;
+  $("list").querySelectorAll(".card").forEach(c => c.onclick = () => openDetail(c.dataset.no));
+}
+
+function card(r) {
+  const img = r.goodsImage ? `<img src="${esc(r.goodsImage)}" loading="lazy" referrerpolicy="no-referrer" alt="">` : "";
+  const code = r.pickupCode ? `<div class="code"><span>取件码</span><b>${esc(r.pickupCode)}</b></div>` : "";
+  return `<div class="card" data-no="${esc(r.mailNo)}">${img}<div class="main">
+    ${code}
+    <div class="title">${esc(r.goodsName || r.companyName || r.mailNo)}</div>
+    <div class="meta"><span class="chip state ${r.section === "abnormal" ? "bad" : ""}">${esc(r.sectionLabel === r.status ? r.status : r.sectionLabel + " · " + r.status)}</span>
+      <span class="chip">${esc(r.sourceLabel)}</span>${r.eta ? `<span class="chip">预计 ${esc(r.eta)}</span>` : ""}</div>
+    <div class="latest">${esc(r.latestText)}</div>
+    <div class="muted">${esc(r.companyName)} ${esc(r.mailNo)}${r.latestTime ? " · " + esc(r.latestTime) : ""}</div>
+  </div></div>`;
+}
+
+async function openDetail(no, refresh) {
+  const box = $("detailBody");
+  if (!refresh) box.innerHTML = `<button class="close" onclick="detail.close()">×</button><p class="muted">加载中…</p>`;
+  if (!$("detail").open) $("detail").showModal();
+  const d = await api(`/api/express/${encodeURIComponent(no)}${refresh ? "?refresh=1" : ""}`);
+  const i = rows.findIndex(r => r.mailNo === no); if (i >= 0) { rows[i] = {...rows[i], ...d}; render(); }
+  box.innerHTML = `<button class="close" onclick="detail.close()">×</button>
+    <h2>${esc(d.goodsName || d.companyName)}</h2>
+    ${d.pickupCode ? `<div class="code big"><span>取件码</span><b>${esc(d.pickupCode)}</b></div>` : ""}
+    <div class="meta"><span class="chip state">${esc(d.status)}</span><span class="chip">${esc(d.sourceLabel)}${d.account ? " · " + esc(d.account) : ""}</span>
+      ${d.eta ? `<span class="chip">预计 ${esc(d.eta)}</span>` : ""}${d.goodsCount ? `<span class="chip">${esc(d.goodsCount)}</span>` : ""}</div>
+    <p class="muted">${esc(d.companyName)} ${esc(d.mailNo)}</p>
+    <div class="row"><button id="refreshTrace">刷新轨迹</button><button id="hideItem">从列表移除</button>
+      <span class="muted">${d.traceFetchedAt ? "轨迹更新于 " + fmtTime(d.traceFetchedAt) : ""}</span></div>
+    <ul class="timeline">${(d.trace || []).map(p => `<li><div>${esc(p.context)}</div><div class="t">${esc(p.time)}</div></li>`).join("") || `<li><div>${esc(d.latestText)}</div><div class="t">${esc(d.latestTime)}</div></li>`}</ul>`;
+  $("refreshTrace").onclick = async e => { e.target.disabled = true; e.target.textContent = "刷新中…"; try { await openDetail(no, true); } catch (err) { e.target.textContent = "刷新失败"; } };
+  $("hideItem").onclick = async () => { if (!confirm("从列表移除这个快递？之后同步也不会再出现。")) return; await api(`/api/express/${encodeURIComponent(no)}/hide`, {method: "POST"}); $("detail").close(); boot(); };
+}
+
+async function refreshStatus() {
+  status = await api("/api/sync");
+  $("syncBtn").disabled = !!status.running;
+  $("syncBtn").textContent = status.running ? "同步中…" : "同步";
+  $("syncInfo").textContent = status.running ? "正在从各平台拉取，浏览器渠道需要一两分钟" : (status.finishedAt ? `上次同步 ${fmtTime(status.finishedAt)}：${status.message || ""}` : "还没有同步过：先点「账号」登录平台");
+  if (status.running) setTimeout(async () => { const was = status.running; await refreshStatus(); if (was && !status.running) { rows = await api("/api/express"); render(); } }, 3000);
+}
+$("syncBtn").onclick = async () => { await api("/api/sync", {method: "POST", body: "{}"}); refreshStatus(); };
+$("q").oninput = render;
+
+// ───────── 账号与设置 ─────────
+$("setBtn").onclick = openSettings;
+async function openSettings() {
+  const [accs, cfg] = await Promise.all([api("/api/accounts"), api("/api/config")]);
+  const origin = location.origin;
+  $("settingsBody").innerHTML = `<button class="close" onclick="settings.close()">×</button><h2>账号与设置</h2>
+    <p class="muted">登录在服务器的浏览器里进行：画面会显示在这里，点击和输入会转发过去。手机号 + 短信验证码最省事。</p>
+    ${Object.entries(SRC).map(([c, n]) => `<div class="section"><h3>${n}</h3>
+      ${(accs[c] || []).map(a => `<div class="acc" data-c="${c}" data-id="${a.id}">
+        <div class="row" style="margin:0"><b style="flex:1">${esc(a.label)}</b>
+          <label class="muted"><input type="checkbox" class="en" style="width:auto" ${a.enabled ? "checked" : ""}> 启用</label>
+          <button class="relogin">重新登录</button><button class="del">删除</button></div>
+        ${c === "xiaomi" ? `<div class="row"><input class="phones" placeholder="收件手机号，多个用逗号分隔" value="${esc((a.phones || []).join(","))}"><button class="savePhones">保存</button></div>` : ""}
+        ${a.lastError ? `<div class="err">${esc(a.lastError)}</div>` : ""}</div>`).join("") || `<p class="muted">未绑定</p>`}
+      <button class="add" data-c="${c}">+ 登录${n}账号</button></div>`).join("")}
+    <div class="section"><h3>自动同步</h3><div class="row"><span>每</span><input id="interval" type="number" min="0" style="width:90px" value="${cfg.syncIntervalMin}"><span>分钟（0 = 关闭）</span><button id="saveInterval">保存</button></div></div>
+    <div class="section"><h3>AI 接口</h3>
+      <p class="muted">MCP（Streamable HTTP）：</p><pre>${esc(origin)}/mcp\nAuthorization: Bearer ${esc(token)}</pre>
+      <p class="muted">REST：</p><pre>curl -H "Authorization: Bearer ${esc(token)}" ${esc(origin)}/api/pickup\ncurl -H "Authorization: Bearer ${esc(token)}" ${esc(origin)}/api/summary</pre>
+      <button id="logout">退出本浏览器</button></div>`;
+  const box = $("settingsBody");
+  box.querySelectorAll(".add").forEach(b => b.onclick = () => startLogin(b.dataset.c));
+  box.querySelectorAll(".acc").forEach(el => {
+    const {c, id} = el.dataset;
+    el.querySelector(".en").onchange = e => api(`/api/accounts/${c}/${id}`, {method: "PATCH", body: JSON.stringify({enabled: e.target.checked})});
+    el.querySelector(".relogin").onclick = () => startLogin(c);
+    el.querySelector(".del").onclick = async () => { if (!confirm("删除这个账号？它同步来的快递也会移除。")) return; await api(`/api/accounts/${c}/${id}`, {method: "DELETE"}); openSettings(); boot(); };
+    const sp = el.querySelector(".savePhones");
+    if (sp) sp.onclick = async () => { await api(`/api/accounts/${c}/${id}`, {method: "PATCH", body: JSON.stringify({phones: el.querySelector(".phones").value})}); sp.textContent = "已保存"; };
+  });
+  $("saveInterval").onclick = async e => { await api("/api/config", {method: "PATCH", body: JSON.stringify({syncIntervalMin: +$("interval").value})}); e.target.textContent = "已保存"; };
+  $("logout").onclick = () => { try { localStorage.removeItem("ea_token"); } catch (e) {} location.reload(); };
+  if (!$("settings").open) $("settings").showModal();
+}
+
+// ───────── 远程登录 ─────────
+let ls = null, lsTimer = 0;
+async function startLogin(c) {
+  $("loginBody").innerHTML = `<p class="muted">正在打开${SRC[c]}登录页…</p>`;
+  $("login").showModal();
+  try { ls = await api(`/api/login/${c}`, {method: "POST"}); }
+  catch (e) { $("loginBody").innerHTML = `<button class="close" onclick="login.close()">×</button><p class="err">打开登录页失败：${esc(e.message)}</p>`; return; }
+  $("loginBody").innerHTML = `<button class="close" id="lsClose">×</button><h2>登录${SRC[c]}</h2>
+    <div id="lsMsg" class="muted"></div>
+    <div class="screen"><img id="lsImg" alt="登录画面"></div>
+    <div class="row"><input id="lsText" placeholder="在这里输入文字，再点「发送」" style="flex:1"><button id="lsSend" class="primary">发送</button></div>
+    <div class="row"><button data-k="Enter">回车</button><button data-k="Backspace">退格</button><button data-s="-400">上滚</button><button data-s="400">下滚</button><button id="lsBack">返回</button><button id="lsReload">刷新</button></div>
+    <p class="muted">点画面即点击；拖动用于滑块验证。输入框需要先在画面里点中。</p>`;
+  const img = $("lsImg");
+  let down = null, path = [];
+  const pos = e => { const r = img.getBoundingClientRect(); return [(e.clientX - r.left) * img.naturalWidth / r.width, (e.clientY - r.top) * img.naturalHeight / r.height]; };
+  img.onpointerdown = e => { e.preventDefault(); down = pos(e); path = [down]; img.setPointerCapture(e.pointerId); };
+  img.onpointermove = e => { if (down) path.push(pos(e)); };
+  img.onpointerup = async e => {
+    if (!down) return; const end = pos(e); const moved = Math.hypot(end[0] - down[0], end[1] - down[1]) > 8; down = null;
+    await send(moved ? {type: "drag", points: [...path, end].filter((_, i, a) => i % 2 === 0 || i === a.length - 1)} : {type: "click", x: end[0], y: end[1]});
+  };
+  $("lsSend").onclick = async () => { await send({type: "text", text: $("lsText").value}); $("lsText").value = ""; };
+  $("lsText").onkeydown = e => { if (e.key === "Enter") $("lsSend").click(); };
+  $("loginBody").querySelectorAll("[data-k]").forEach(b => b.onclick = () => send({type: "key", key: b.dataset.k}));
+  $("loginBody").querySelectorAll("[data-s]").forEach(b => b.onclick = () => send({type: "scroll", dy: +b.dataset.s}));
+  $("lsBack").onclick = () => send({type: "back"});
+  $("lsReload").onclick = () => send({type: "reload"});
+  $("lsClose").onclick = closeLogin;
+  loop();
+}
+async function send(ev) { if (!ls) return; try { await api(`/api/login/s/${ls.id}/input`, {method: "POST", body: JSON.stringify(ev)}); } catch (e) {} setTimeout(frame, 250); }
+async function frame() {
+  if (!ls) return;
+  try {
+    const r = await api(`/api/login/s/${ls.id}/screen`);
+    const url = URL.createObjectURL(await r.blob());
+    const img = $("lsImg"); if (!img) return;
+    const old = img.src; img.src = url; if (old) URL.revokeObjectURL(old);
+  } catch (e) {}
+}
+async function loop() {
+  clearTimeout(lsTimer);
+  if (!ls || !$("login").open) return;
+  try {
+    const s = await api(`/api/login/s/${ls.id}`);
+    $("lsMsg").textContent = s.message;
+    if (s.status !== "waiting") {
+      $("lsMsg").className = s.status === "done" ? "" : "err";
+      if (s.status === "done") { setTimeout(() => { closeLogin(); openSettings(); }, 1500); return; }
+      return;
+    }
+  } catch (e) { $("lsMsg").textContent = "登录会话已过期，请关闭后重试"; return; }
+  await frame();
+  lsTimer = setTimeout(loop, 900);
+}
+async function closeLogin() {
+  clearTimeout(lsTimer);
+  if (ls) { const id = ls.id; ls = null; try { await api(`/api/login/s/${id}`, {method: "DELETE"}); } catch (e) {} }
+  $("login").close();
+}
+$("login").addEventListener("cancel", e => { e.preventDefault(); closeLogin(); });
+
+boot();
+setInterval(() => { if (!$("app").hidden && !status.running) api("/api/express").then(r => { rows = r; render(); }).catch(() => {}); }, 120000);
+</script>
+</body>
+</html>

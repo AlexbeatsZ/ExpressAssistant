@@ -34,7 +34,6 @@ object Store {
     private const val KEY_PENDING_REPORT = "pending_report"
     private const val KEY_REPORT_ISSUE = "report_issue"
     private const val KEY_REPORT_FIRST_DATE = "report_first_date"
-    private const val KEY_LOCAL_API_ENABLED = "local_api_enabled"
     private const val KEY_HOME_ADDRESS = "home_address"
     private const val KEY_ADDRESSES = "addresses"
     private const val KEY_ACTIVE_ADDRESS_ID = "active_address_id"
@@ -917,15 +916,6 @@ object Store {
         }
         editor.commit()
         return next
-    }
-
-    fun localApiEnabled(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_LOCAL_API_ENABLED, true)
-
-    fun saveLocalApiEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putBoolean(KEY_LOCAL_API_ENABLED, enabled)
-        }
     }
 
     /* ─────────────── 多地址管理（可新增/编辑/删除/切换当前） ─────────────── */

@@ -10,3 +10,9 @@ captures/
 *.apk
 *.aab
 outputs/
+
+# PC server
+server/data/
+server/.venv/
+__pycache__/
+.pytest_cache/

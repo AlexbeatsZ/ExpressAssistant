@@ -9,8 +9,9 @@
 | `ai/` | `AiClient`（DeepSeek 聊天 + 进度/ETA 计算）、`Markdown`（Markwon 渲染） |
 | `ui/` | 全部页面与 UI 基建：Main/Detail/Chat/Settings、**`SyncEngine`（四源融合同步 + 短名后台优化）**、**`JdListFetcher`（京东订单列表，WebView+JS 捕获）**、**`JdTrackFetcher`（京东物流页轨迹）**、**`JdOrderResolver`（京东商品溯源）**、**`CaiNiaoGoodsResolver`（菜鸟轨迹+商品，纯 OkHttp）**、**`PddCapture`（拼多多隐藏 WebView 公共设施）**、**`PddListFetcher`（拼多多包裹列表）**、**`PddTraceFetcher`（拼多多轨迹+商品）**、**`GoodsPresentation`（取件码解析 + 短名 AI 优化）**、`JdLoginActivity`/`TbLoginActivity`/`PddLoginActivity`（京东/淘宝/拼多多 H5 登录）、`JdTraceActivity`（逆向实验工具）、`Themes`、`Paper`、`Sheets`、`EdgeToEdge` |
 | `widget/` | 桌面小组件 `ExpressWidgetProvider` |
-| `service/` | Shizuku shell 客户端、无障碍导入服务、`LocalApiServer`（CLI/MCP） |
-| 根目录 | `DailyReporter`（生成+通知）、`ReportScheduler`/`ReportReceiver`/`BootReceiver`、`TrackingWorker`/`TrackingNotifier`、`ApiServer` 启动 |
+| `service/` | Shizuku shell 客户端、无障碍导入服务 |
+| 根目录 | `DailyReporter`（生成+通知）、`ReportScheduler`/`ReportReceiver`/`BootReceiver`、`TrackingWorker`/`TrackingNotifier` |
+| `server/`（独立 Python 项目） | PC 服务器版：Playwright 无头浏览器 + aiohttp，移植四源抓取与合并，网页查看 + REST/MCP，详见 `docs/design/server.md` |
 
 ## 数据模型
 

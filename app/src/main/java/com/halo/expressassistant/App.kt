@@ -8,7 +8,6 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import com.halo.expressassistant.data.Store
 import java.util.concurrent.TimeUnit
 
 class App : Application() {
@@ -25,9 +24,6 @@ class App : Application() {
             .build()
         WorkManager.getInstance(this)
             .enqueueUniquePeriodicWork("express_tracking", ExistingPeriodicWorkPolicy.UPDATE, request)
-        if (Store.localApiEnabled(this)) {
-            ApiServer.start(this)
-        }
         // 记录当前前台 Activity：小组件刷新等后台入口需要 Activity 上下文跑四源同步
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
