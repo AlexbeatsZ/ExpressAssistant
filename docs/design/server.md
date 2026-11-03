@@ -55,3 +55,11 @@
 - 公开实现的调用参数参考：`polygongfw/pickup-assistant` 的 `data/Api.kt` 和 `data/Mtop.kt`，只参考接口名与参数，没有复制其源码。
 - 真实淘宝会话调用 `mtop.cainiao.nbpickup.identitycode.get` 1.0，data=`{"appName":"GUOGUO","verifyVersion":"V2"}`，得到 `SUCCESS`，但 `data.model` 仅有 `certificated`、`hasNewCertificated`、`simpleCertificated`、`weakCertificated`、`xnCertificated`，均为字符串 `false`，无二维码内容。
 - 这说明该会话尚未取到可用身份码，不能据此断言接口已接通完整功能或二维码已可出示。下一步需用户在官方入口检查身份码开通/认证状态，之后再验证码字段和有效期。不要猜测字段并生成误导性的二维码。
+- 补充探测（同日）：`verifyVersion` 换 V1 或不传，结果相同（五个 false）。公开项目 `pickup-assistant` 只定义了身份码接口名，界面并未实现身份码出示；GitHub 代码搜索未找到其他实现。结论：身份码依赖账号先在淘宝 App 官方入口完成开通/认证，开通前无法取得码内容。
+
+## 菜鸟「我的包裹」取件码（候选数据源，未接入）
+
+- `mtop.cainiao.lpc.packageservice.queryPdsPackageDataList` 1.0（备份 `mtop.cainiao.pcs.packageservice.queryPackageDataList`），data=`{"pageSize":50,"currentPage":N,"needTemporality":false,"needDynInfo":"{'needFindTemporality':true,'needAppointment':true}"}`，按 `totalPage` 翻页；淘宝会话 + 现有 mtop 签名即可调用。
+- 真实会话返回 13 件，包含京东、闲鱼等「末端非淘包裹」：按收件手机号覆盖所有进菜鸟驿站的件，不限淘宝订单。
+- 取件码字段：`packageStation.authCode`；值为占位 `needSms` 时回退 `feature.stationOrderPickUpCode`（feature 是 JSON 字符串，也可能有 `featureObj`）；两者都没有则表示需短信验证，不能当码展示。当前 13 件全部已签收，authCode 均为 `needSms` 或空，待取件状态下的真实码尚未验证。
+- 菜鸟物流轨迹文本只写「请凭取货码及时取件（查询方式：短信/物流详情页）」，不含码，所以靠轨迹正则拿不到菜鸟驿站的取件码；这个接口是驿站件取件码的主要来源。
