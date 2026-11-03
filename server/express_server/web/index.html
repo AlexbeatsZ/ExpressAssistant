@@ -95,7 +95,11 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 async function api(path, opt = {}) {
   const r = await fetch(path, {...opt, headers: {"Authorization": "Bearer " + token, "Content-Type": "application/json", ...(opt.headers || {})}});
   if (r.status === 401) { showGate("令牌不正确"); throw new Error("unauthorized"); }
-  if (!r.ok && r.status !== 409) throw new Error(await r.text());
+  if (!r.ok && r.status !== 409) {
+    const msg = await r.text();
+    try { const d = JSON.parse(msg); throw new Error(d.error || d.message || msg); }
+    catch (e) { if (e instanceof SyntaxError) throw new Error(msg); throw e; }
+  }
   return r.headers.get("content-type")?.includes("json") ? r.json() : r;
 }
 function showGate(msg) { $("app").hidden = true; $("gate").hidden = false; $("gateErr").textContent = msg || ""; }
@@ -175,10 +179,10 @@ $("q").oninput = render;
 // ───────── 账号与设置 ─────────
 $("setBtn").onclick = openSettings;
 async function openSettings() {
-  const [accs, cfg] = await Promise.all([api("/api/accounts"), api("/api/config")]);
+  const [accs, cfg, loginOpts] = await Promise.all([api("/api/accounts"), api("/api/config"), api("/api/login/options")]);
   const origin = location.origin;
   $("settingsBody").innerHTML = `<button class="close" onclick="settings.close()">×</button><h2>账号与设置</h2>
-    <p class="muted">登录在服务器的浏览器里进行：画面会显示在这里，点击和输入会转发过去。手机号 + 短信验证码最省事。</p>
+    <p class="muted">${loginOpts.localAvailable ? "在这台电脑前使用「本机浏览器登录」，直接在打开的浏览器窗口中操作。" : "服务器没有可用桌面。"} 从其他设备访问时，可导入 Cookie 或使用远程画面登录。</p>
     ${Object.entries(SRC).map(([c, n]) => `<div class="section"><h3>${n}</h3>
       ${(accs[c] || []).map(a => `<div class="acc" data-c="${c}" data-id="${a.id}">
         <div class="row" style="margin:0"><b style="flex:1">${esc(a.label)}</b>
@@ -186,14 +190,15 @@ async function openSettings() {
           <button class="relogin">重新登录</button><button class="del">删除</button></div>
         ${c === "xiaomi" ? `<div class="row"><input class="phones" placeholder="收件手机号，多个用逗号分隔" value="${esc((a.phones || []).join(","))}"><button class="savePhones">保存</button></div>` : ""}
         ${a.lastError ? `<div class="err">${esc(a.lastError)}</div>` : ""}</div>`).join("") || `<p class="muted">未绑定</p>`}
-      <button class="add" data-c="${c}">+ 登录${n}账号</button></div>`).join("")}
+      <div class="row" style="margin-top:0">${loginOpts.localAvailable ? `<button class="add ${loginOpts.defaultMode === "local" ? "primary" : ""}" data-c="${c}" data-mode="local">本机浏览器登录</button>` : ""}<button class="imp ${loginOpts.defaultMode !== "local" ? "primary" : ""}" data-c="${c}">导入 Cookie</button><button class="add" data-c="${c}" data-mode="remote">远程画面登录</button></div></div>`).join("")}
     <div class="section"><h3>自动同步</h3><div class="row"><span>每</span><input id="interval" type="number" min="0" style="width:90px" value="${cfg.syncIntervalMin}"><span>分钟（0 = 关闭）</span><button id="saveInterval">保存</button></div></div>
     <div class="section"><h3>AI 接口</h3>
       <p class="muted">MCP（Streamable HTTP）：</p><pre>${esc(origin)}/mcp\nAuthorization: Bearer ${esc(token)}</pre>
       <p class="muted">REST：</p><pre>curl -H "Authorization: Bearer ${esc(token)}" ${esc(origin)}/api/pickup\ncurl -H "Authorization: Bearer ${esc(token)}" ${esc(origin)}/api/summary</pre>
       <button id="logout">退出本浏览器</button></div>`;
   const box = $("settingsBody");
-  box.querySelectorAll(".add").forEach(b => b.onclick = () => startLogin(b.dataset.c));
+  box.querySelectorAll(".add").forEach(b => b.onclick = () => startLogin(b.dataset.c, b.dataset.mode));
+  box.querySelectorAll(".imp").forEach(b => b.onclick = () => openImport(b.dataset.c));
   box.querySelectorAll(".acc").forEach(el => {
     const {c, id} = el.dataset;
     el.querySelector(".en").onchange = e => api(`/api/accounts/${c}/${id}`, {method: "PATCH", body: JSON.stringify({enabled: e.target.checked})});
@@ -207,13 +212,61 @@ async function openSettings() {
   if (!$("settings").open) $("settings").showModal();
 }
 
-// ───────── 远程登录 ─────────
-let ls = null, lsTimer = 0;
-async function startLogin(c) {
-  $("loginBody").innerHTML = `<p class="muted">正在打开${SRC[c]}登录页…</p>`;
+// ───────── Cookie 导入 ─────────
+const IMPORT_HELP = {
+  jd: ["https://home.m.jd.com/myJd/home.action", "需要 pt_key、pt_pin"],
+  taobao: ["https://h5.m.taobao.com/mlapp/olist.html", "需要 cookie2、unb（以及 _m_h5_tk）"],
+  pdd: ["https://mobile.yangkeduo.com/orders.html", "需要 PDDAccessToken"],
+  xiaomi: ["https://account.xiaomi.com/", "需要 passToken、userId、deviceId（在 account.xiaomi.com 域下）"],
+};
+function openImport(c) {
+  const [url, need] = IMPORT_HELP[c];
+  $("loginBody").innerHTML = `<button class="close" onclick="login.close()">×</button><h2>导入${SRC[c]} Cookie</h2>
+    <ol class="muted" style="padding-left:18px;margin:6px 0">
+      <li>电脑浏览器打开 <a href="${url}" target="_blank" rel="noreferrer">${esc(url)}</a> 并登录（可按 F12 切到手机模式）</li>
+      <li>F12 → Network（网络）→ 刷新 → 点第一个请求 → Request Headers 里的 <b>cookie</b>，整段复制</li>
+      <li>或用 Cookie-Editor 扩展「Export → JSON」</li></ol>
+    <p class="muted">${esc(need)}。document.cookie 看不到 HttpOnly 的 Cookie，不要用它。</p>
+    <textarea id="impText" rows="7" placeholder="粘贴 Cookie 请求头或 JSON"></textarea>
+    <div class="row"><button class="primary" id="impGo">导入</button><span id="impMsg" class="muted"></span></div>`;
+  if (!$("login").open) $("login").showModal();
+  $("impGo").onclick = async e => {
+    e.target.disabled = true; $("impMsg").className = "muted"; $("impMsg").textContent = "校验中…";
+    try {
+      const r = await fetch(`/api/accounts/${c}/import`, {method: "POST", headers: {"Authorization": "Bearer " + token, "Content-Type": "application/json"}, body: JSON.stringify({cookies: $("impText").value})});
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || "导入失败");
+      $("impMsg").textContent = `已导入：${d.account.label}，开始同步${SRC[c]}…`;
+      await api("/api/sync", {method: "POST", body: JSON.stringify({channels: [c]})});
+      refreshStatus();
+      setTimeout(() => { $("login").close(); openSettings(); }, 1500);
+    } catch (err) { $("impMsg").className = "err"; $("impMsg").textContent = err.message; e.target.disabled = false; }
+  };
+}
+
+// ───────── 本机 / 远程登录 ─────────
+let ls = null, lsTimer = 0, loginAttempt = 0;
+async function startLogin(c, mode = "auto") {
+  await closeLogin();
+  const attempt = ++loginAttempt;
+  $("loginBody").innerHTML = `<button class="close" id="lsClose">×</button><p class="muted">正在打开${SRC[c]}登录页…</p>`;
+  $("lsClose").onclick = closeLogin;
   $("login").showModal();
-  try { ls = await api(`/api/login/${c}`, {method: "POST"}); }
-  catch (e) { $("loginBody").innerHTML = `<button class="close" onclick="login.close()">×</button><p class="err">打开登录页失败：${esc(e.message)}</p>`; return; }
+  try {
+    const session = await api(`/api/login/${c}`, {method: "POST", body: JSON.stringify({mode})});
+    if (attempt !== loginAttempt) { await api(`/api/login/s/${session.id}`, {method: "DELETE"}); return; }
+    ls = session;
+  } catch (e) {
+    if (attempt === loginAttempt) $("loginBody").innerHTML = `<button class="close" onclick="login.close()">×</button><p class="err">打开登录页失败：${esc(e.message)}</p>`;
+    return;
+  }
+  if (ls.mode === "local") {
+    $("loginBody").innerHTML = `<button class="close" id="lsClose">×</button><h2>登录${SRC[c]}</h2>
+      <p id="lsMsg" class="muted"></p><p>请在服务器这台电脑上打开的浏览器窗口里完成登录。成功后窗口会自动关闭，账号会保存在服务器。</p>
+      <div class="row"><button id="lsCancel">取消登录</button></div>`;
+    $("lsClose").onclick = closeLogin; $("lsCancel").onclick = closeLogin;
+    loop(); return;
+  }
   $("loginBody").innerHTML = `<button class="close" id="lsClose">×</button><h2>登录${SRC[c]}</h2>
     <div id="lsMsg" class="muted"></div>
     <div class="screen"><img id="lsImg" alt="登录画面"></div>
@@ -240,30 +293,39 @@ async function startLogin(c) {
 }
 async function send(ev) { if (!ls) return; try { await api(`/api/login/s/${ls.id}/input`, {method: "POST", body: JSON.stringify(ev)}); } catch (e) {} setTimeout(frame, 250); }
 async function frame() {
-  if (!ls) return;
+  if (!ls || ls.mode !== "remote") return;
+  const id = ls.id;
   try {
-    const r = await api(`/api/login/s/${ls.id}/screen`);
+    const r = await api(`/api/login/s/${id}/screen`);
+    if (ls?.id !== id || !(r instanceof Response)) return;
     const url = URL.createObjectURL(await r.blob());
-    const img = $("lsImg"); if (!img) return;
+    const img = $("lsImg"); if (!img) { URL.revokeObjectURL(url); return; }
     const old = img.src; img.src = url; if (old) URL.revokeObjectURL(old);
   } catch (e) {}
 }
 async function loop() {
   clearTimeout(lsTimer);
   if (!ls || !$("login").open) return;
+  const id = ls.id;
   try {
-    const s = await api(`/api/login/s/${ls.id}`);
+    const s = await api(`/api/login/s/${id}`);
+    if (ls?.id !== id) return;
     $("lsMsg").textContent = s.message;
     if (s.status !== "waiting") {
       $("lsMsg").className = s.status === "done" ? "" : "err";
-      if (s.status === "done") { setTimeout(() => { closeLogin(); openSettings(); }, 1500); return; }
+      if (s.status === "done") {
+        setTimeout(async () => { if (ls?.id !== id) return; await closeLogin(); await openSettings(); }, 1000);
+        return;
+      }
       return;
     }
-  } catch (e) { $("lsMsg").textContent = "登录会话已过期，请关闭后重试"; return; }
-  await frame();
+  } catch (e) { if (ls?.id === id) $("lsMsg").textContent = "登录会话已过期，请关闭后重试"; return; }
+  if (ls?.id !== id) return;
+  if (ls?.mode === "remote") await frame();
   lsTimer = setTimeout(loop, 900);
 }
 async function closeLogin() {
+  ++loginAttempt;
   clearTimeout(lsTimer);
   if (ls) { const id = ls.id; ls = null; try { await api(`/api/login/s/${id}`, {method: "DELETE"}); } catch (e) {} }
   $("login").close();

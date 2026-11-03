@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 import aiohttp
 
-from ..parse import cookie_header, eta_from
+from ..parse import cookie_header, eta_from, pickup_code_from
 
 log = logging.getLogger("taobao")
 
@@ -91,18 +91,47 @@ def _parse_bought(body: str) -> list[dict]:
     return orders
 
 
-def _ssr_logistics(html: str) -> dict | None:
+def _ssr_data(html: str) -> dict:
     marker = "__ICE_SUSPENSE_LOADER__']['undefined'] = "
     i = html.find(marker)
     if i < 0:
-        return None
+        return {}
     try:
         obj, _ = json.JSONDecoder().raw_decode(html[i + len(marker):])
     except ValueError:
-        return None
-    data = ((obj.get("result") or {}).get("data")) or {}
+        return {}
+    return ((obj.get("result") or {}).get("data")) or {}
+
+
+def _ssr_logistics(data: dict) -> dict | None:
     return ((data.get("newLogistics") or {}).get("fields")
             or (data.get("logisticsDetailH5") or {}).get("fields"))
+
+
+# 菜鸟轨迹只写「请凭取货码取件（查询方式：短信/物流详情页）」，码本身在详情页的驿站卡片里：
+# 字段名未在真实待取件数据上确认，按候选键 + 全文「取件码」扫描容错
+_CODE_KEYS = re.compile(r"^(pick_?up_?code|pickupcode|take_?code|fetch_?code|get_?code|auth_?code|code_?no|shelf_?code|"
+                        r"package_?code|station_?code_?no|pick_?code)$", re.I)
+_CODE_VAL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]{1,12}$")
+_CODE_PLACEHOLDERS = {"needsms", "need_sms", "none", "null", "-1", "0"}
+
+
+def _scan_pickup(node) -> str:
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if (isinstance(v, (str, int)) and not isinstance(v, bool) and _CODE_KEYS.match(k)
+                    and _CODE_VAL.match(str(v)) and str(v).lower() not in _CODE_PLACEHOLDERS):
+                return str(v)
+        for v in node.values():
+            code = _scan_pickup(v)
+            if code:
+                return code
+    elif isinstance(node, list):
+        for v in node:
+            code = _scan_pickup(v)
+            if code:
+                return code
+    return ""
 
 
 def _stage_text(st: dict) -> str:
@@ -117,7 +146,8 @@ def _stage_text(st: dict) -> str:
 
 
 def _parse_ssr(html: str, order_id: str) -> tuple[dict, list[dict]] | None:
-    lg = _ssr_logistics(html)
+    data = _ssr_data(html)
+    lg = _ssr_logistics(data)
     if not lg:
         return None
     company = lg.get("logisticCompany") or {}
@@ -135,6 +165,7 @@ def _parse_ssr(html: str, order_id: str) -> tuple[dict, list[dict]] | None:
         "mailNo": mail, "cpName": company.get("name", ""), "stateLabel": first.get("title", ""),
         "latestText": _stage_text(first) if first else "", "latestTime": (first.get("subtitle") or first.get("time", "")) if first else "",
         "orderId": order_id,
+        "pickupCode": _scan_pickup(data) or pickup_code_from(json.dumps(data, ensure_ascii=False)),
     }
     # SSR 的 multiStage 最新在前；统一存为时间正序
     return parcel, list(reversed(points))
@@ -157,7 +188,7 @@ def _to_item(p: dict, account: dict) -> dict:
         "id": p["mailNo"], "mailNo": p["mailNo"], "companyCode": "", "companyName": p["cpName"] or "淘宝快递",
         "latestText": p["latestText"], "latestTime": p["latestTime"], "state": state, "stateName": label,
         "stateNum": num, "provider": "CaiNiao", "eta": eta_from(p["latestText"], label),
-        "queryChannel": p["orderId"], "source": "taobao", "accountId": account["id"], "accountLabel": account.get("label", ""),
+        "queryChannel": p["orderId"], "pickupCode": "" if state == 3 else p.get("pickupCode", ""), "source": "taobao", "accountId": account["id"], "accountLabel": account.get("label", ""),
     }
 
 

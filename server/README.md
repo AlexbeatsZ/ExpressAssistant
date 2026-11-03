@@ -18,22 +18,33 @@ uv run express-server
 | 参数 | 说明 |
 | --- | --- |
 | `--host 0.0.0.0` | 默认监听所有网卡；只给本机用填 `127.0.0.1` |
-| `--port 8765` | 端口 |
+| `--port 18765` | 端口（默认 18765，避开常见的 8765） |
 | `--data ./data` | 数据目录（账号登录态、快递、轨迹、令牌），默认 `server/data/` |
 | `--token xxx` | 指定访问令牌 |
 | `--browser msedge` | 指定浏览器；默认依次尝试 Edge、Chrome、Playwright 自带 Chromium |
 | `--headed` | 显示浏览器窗口（调试用） |
+| `--login-mode auto` | 默认：桌面本机访问时直接打开登录窗口，远程访问使用远程画面；可指定 `local` / `remote` |
 
 没有 Edge/Chrome 时，运行 `uv run playwright install chromium` 安装 Playwright 自带的浏览器。
 
 ## 登录各平台
 
-打开网页 → 右上角「账号」→「+ 登录 X 账号」。服务器在无头浏览器里打开平台登录页，画面实时显示在网页里：点画面就是点击，下方输入框发送文字，拖动用于滑块验证。登录成功后自动保存登录态。
+打开网页 → 右上角「账号」，每个平台提供以下登录方式：
+
+- **本机浏览器登录**：服务器有可用桌面时显示此入口。在 Mac / Windows 电脑前，直接在新打开的 Chrome / Edge 窗口里完成登录，无需串流。成功后自动保存账号并关闭窗口；后台同步仍在隐藏浏览器中运行。关闭窗口或点「取消登录」不会覆盖已有账号。
+- **导入 Cookie**：从其他设备访问时，可在自己的浏览器里登录平台，再把 Cookie 请求头、Cookie-Editor JSON 或 Playwright storage_state 粘贴进来。只导入该平台域下的 Cookie，不会覆盖其他平台账号。
+- **远程画面登录**：无桌面的服务器可用此入口。服务器打开隐藏浏览器，在网页显示截图并转发点击、输入和拖动。此入口仍使用截图轮询，复杂滑块可能不流畅。
+
+默认 `auto` 仅在可用桌面且浏览器通过本机回环地址访问时优先使用本机窗口；手机或其他设备访问时优先导入 Cookie，也可以明确选择在服务器本机打开窗口。`--headed` 仅用于调试后台浏览器，日常使用无需开启。
 
 - 京东 / 淘宝 / 拼多多：手机号 + 短信验证码最省事。
 - 小米：用小米账号登录，之后在账号里填**收件手机号**（小米按手机号查件；手机号需要已在小米智能助理里绑定过）。
 
 登录态失效时，账号下方会显示错误，点「重新登录」即可，同一账号不会重复添加。
+
+### 菜鸟身份码
+
+当前展示的是单个包裹的**取件码**，尚未提供菜鸟账号身份二维码。2026-11-03 用已登录淘宝账号测试 `mtop.cainiao.nbpickup.identitycode.get`（`appName=GUOGUO`、`verifyVersion=V2`）时，接口返回成功，但只有五个值为 `false` 的认证标志，没有返回码内容。需要先在官方入口检查该账号的身份码开通/认证状态，再验证实际返回格式与有效期；接口成功不等于已经取得可用身份码。
 
 ## 网页
 
@@ -46,7 +57,7 @@ uv run express-server
 
 ### MCP（Streamable HTTP）
 
-地址 `http://<服务器>:8765/mcp`。工具：
+地址 `http://<服务器>:18765/mcp`。工具：
 
 | 工具 | 作用 |
 | --- | --- |
@@ -59,7 +70,7 @@ uv run express-server
 Claude Code 示例：
 
 ```bash
-claude mcp add --transport http express http://<服务器>:8765/mcp --header "Authorization: Bearer <令牌>"
+claude mcp add --transport http express http://<服务器>:18765/mcp --header "Authorization: Bearer <令牌>"
 ```
 
 ### REST

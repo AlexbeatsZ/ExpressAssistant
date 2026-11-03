@@ -1,7 +1,7 @@
 import json
 
 from express_server.channels import jd, pdd, taobao, xiaomi
-from express_server.parse import eta_from, pickup_code_from, pickup_code_from_points, section_of
+from express_server.parse import eta_from, pickup_code_from, pickup_code_from_points, section_of, state_label
 
 
 def test_pickup_code():
@@ -20,6 +20,16 @@ def test_section():
     assert section_of({"state": 5, "stateNum": 105}) == "delivering"
     assert section_of({"state": 1, "stateNum": 103}) == "notshipped"
     assert section_of({"state": 4}) == "abnormal"
+
+
+def test_pdd_completed_trace_overrides_marketing_status():
+    base = {"source": "pdd", "state": 5, "stateNum": 105, "stateName": "拼过2次", "pickupCode": "1-2-3"}
+    for text in ("已签收，签收人凭取货码签收。", "您的快件已取走【菜鸟驿站】"):
+        item = {**base, "latestText": text}
+        assert section_of(item) == "done"
+        assert state_label(item) == "已签收"
+    assert section_of({**base, "latestText": "您的快件已由菜鸟驿站代收，请凭取货码取件"}) == "pickup"
+    assert section_of({**base, "latestText": "已签收，菜鸟驿站代收，请及时取件"}) == "pickup"
 
 
 def test_eta():
@@ -70,3 +80,23 @@ def test_taobao_ssr():
     item = taobao._to_item(parcel, {"id": "t"})
     assert item["queryChannel"] == "O1"
     assert taobao.label_from_cookies({"unb": "123", "_nk_": "tb%5Cu5c0f%5Cu660e"}) == ("123", "tb小明")
+
+
+def test_parse_cookie_text():
+    from express_server.login import parse_cookie_text
+
+    hdr = parse_cookie_text("Cookie: pt_key=AAA; pt_pin=jd_x;  other=1", ("jd.com",))
+    assert {c["name"] for c in hdr} == {"pt_key", "pt_pin", "other"} and hdr[0]["domain"] == ".jd.com"
+    js = parse_cookie_text(json.dumps([
+        {"domain": ".taobao.com", "name": "cookie2", "value": "c", "expirationDate": 1893456000, "httpOnly": True, "sameSite": "no_restriction"},
+        {"domain": ".alipay.com", "name": "x", "value": "y"},
+    ]), ("taobao.com", "tmall.com"))
+    assert len(js) == 1 and js[0]["sameSite"] == "None" and js[0]["httpOnly"] and js[0]["expires"] == 1893456000
+
+
+def test_taobao_pickup_scan():
+    data = {"stationCard": {"fields": {"stationName": "复旦南区驿站", "pickUpCode": "8-3-2201"}}}
+    assert taobao._scan_pickup(data) == "8-3-2201"
+    assert taobao._scan_pickup({"facilityCode": "769901", "orderCode": "LP0084"}) == ""
+    assert taobao._scan_pickup({"pickUpCode": "needSms", "station": {"pickUpCode": "8-3-2201"}}) == "8-3-2201"
+    assert taobao._scan_pickup({"pickUpCode": "null"}) == ""

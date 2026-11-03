@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -29,38 +31,65 @@ MOBILE_VIEWPORT = {"width": 400, "height": 860}
 _BLOCK_SCHEMES = ("pinduoduo://", "openapp.jdmobile://", "taobao://", "tbopen://", "intent://")
 
 
+def desktop_available() -> bool:
+    """只有当前进程能访问用户桌面时，才默认提供本机窗口登录。"""
+    if sys.platform == "darwin":
+        try:
+            return os.getuid() != 0 and os.stat("/dev/console").st_uid == os.getuid()
+        except OSError:
+            return False
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class USEROBJECTFLAGS(ctypes.Structure):
+            _fields_ = [("inherit", wintypes.BOOL), ("reserved", wintypes.BOOL), ("flags", wintypes.DWORD)]
+
+        user32 = ctypes.windll.user32
+        user32.GetProcessWindowStation.restype = wintypes.HANDLE
+        user32.GetUserObjectInformationW.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                                    wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+        flags, needed = USEROBJECTFLAGS(), wintypes.DWORD()
+        return bool(user32.GetUserObjectInformationW(user32.GetProcessWindowStation(), 1, ctypes.byref(flags),
+                                                    ctypes.sizeof(flags), ctypes.byref(needed)) and flags.flags & 1)
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
 class BrowserManager:
     def __init__(self, channel: str | None = None, headless: bool = True):
         self.channel = channel
         self.headless = headless
         self._pw: Playwright | None = None
-        self._browser: Browser | None = None
+        self._browsers: dict[bool, Browser] = {}
         self._lock = asyncio.Lock()
 
-    async def browser(self) -> Browser:
+    async def browser(self, headless: bool | None = None) -> Browser:
+        hidden = self.headless if headless is None else headless
         async with self._lock:
-            if self._browser and self._browser.is_connected():
-                return self._browser
+            browser = self._browsers.get(hidden)
+            if browser and browser.is_connected():
+                return browser
             if self._pw is None:
                 self._pw = await async_playwright().start()
             channels = [self.channel] if self.channel else ["msedge", "chrome", None]
             last: Exception | None = None
             for ch in channels:
                 try:
-                    kwargs: dict[str, Any] = {"headless": self.headless, "args": ["--disable-blink-features=AutomationControlled"]}
+                    kwargs: dict[str, Any] = {"headless": hidden, "args": ["--disable-blink-features=AutomationControlled"]}
                     if ch:
                         kwargs["channel"] = ch
-                    self._browser = await self._pw.chromium.launch(**kwargs)
-                    log.info("browser launched channel=%s", ch or "bundled-chromium")
-                    return self._browser
+                    browser = await self._pw.chromium.launch(**kwargs)
+                    self._browsers[hidden] = browser
+                    log.info("browser launched channel=%s headless=%s", ch or "bundled-chromium", hidden)
+                    return browser
                 except Exception as e:  # noqa: BLE001 - 依次尝试本机浏览器
                     last = e
             raise RuntimeError(
                 "找不到可用的 Chromium 浏览器：请安装 Edge/Chrome，或运行 `uv run playwright install chromium`"
             ) from last
 
-    async def context(self, profile: Path | None, mobile: bool = True) -> BrowserContext:
-        b = await self.browser()
+    async def context(self, profile: Path | None, mobile: bool = True, headless: bool | None = None) -> BrowserContext:
+        b = await self.browser(headless)
         kwargs: dict[str, Any] = {"locale": "zh-CN", "timezone_id": "Asia/Shanghai"}
         if mobile:
             kwargs.update(user_agent=MOBILE_UA, viewport=MOBILE_VIEWPORT, device_scale_factor=2, is_mobile=True, has_touch=True)
@@ -79,10 +108,12 @@ class BrowserManager:
         return ctx
 
     async def close(self) -> None:
-        if self._browser:
-            await self._browser.close()
+        for browser in self._browsers.values():
+            await browser.close()
+        self._browsers.clear()
         if self._pw:
             await self._pw.stop()
+            self._pw = None
 
 
 async def swipe_up(page: Page, steps: int = 8) -> None:

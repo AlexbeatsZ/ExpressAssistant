@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import ipaddress
 import json
 import logging
 from pathlib import Path
@@ -188,13 +189,33 @@ class Api:
             self.store.save_config()
         return await self.config_get(r)
 
-    # ───────── 远程登录 ─────────
+    # ───────── 登录 ─────────
+
+    def _login_options(self, r: web.Request) -> dict:
+        try:
+            local_client = ipaddress.ip_address(r.remote or "").is_loopback
+        except ValueError:
+            local_client = False
+        return self.logins.options(local_client)
+
+    async def login_options(self, r: web.Request):
+        return _json(self._login_options(r))
 
     async def login_start(self, r: web.Request):
         c = r.match_info["channel"]
         if c not in CHANNELS:
             return _json({"ok": False, "error": "unknown channel"}, 400)
-        s = await self.logins.start(c)
+        body = await r.json() if r.can_read_body else {}
+        mode = body.get("mode", "auto")
+        if mode == "auto":
+            mode = self._login_options(r)["defaultMode"]
+        try:
+            s = await self.logins.start(c, mode)
+        except ValueError as e:
+            return _json({"ok": False, "error": str(e)}, 400)
+        except Exception:
+            log.exception("login start fail channel=%s mode=%s", c, mode)
+            return _json({"ok": False, "error": "打开登录浏览器失败，请重试或切换登录方式"}, 503)
         return _json(s.public())
 
     def _session(self, r: web.Request):
@@ -207,13 +228,29 @@ class Api:
         return _json(self._session(r).public())
 
     async def login_screen(self, r: web.Request):
-        img = await self.logins.screenshot(self._session(r))
+        s = self._session(r)
+        if s.mode == "local" or s.status != "waiting":
+            return _json({"ok": False, "error": "此会话不使用远程画面"}, 409)
+        img = await self.logins.screenshot(s)
         return web.Response(body=img, content_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     async def login_input(self, r: web.Request):
         s = self._session(r)
+        if s.mode == "local" or s.status != "waiting":
+            return _json({"ok": False, "error": "请在本机浏览器窗口操作"}, 409)
         await self.logins.input(s, await r.json())
         return _json(s.public())
+
+    async def cookie_import(self, r: web.Request):
+        c = r.match_info["channel"]
+        if c not in CHANNELS:
+            return _json({"ok": False, "error": "unknown channel"}, 400)
+        body = await r.json()
+        try:
+            acc = await self.logins.import_cookies(c, str(body.get("cookies", "")))
+        except (ValueError, RuntimeError) as e:
+            return _json({"ok": False, "error": str(e)}, 400)
+        return _json({"ok": True, "account": acc})
 
     async def login_close(self, r: web.Request):
         await self.logins.close(r.match_info["sid"])
@@ -320,7 +357,9 @@ class Api:
             web.delete("/api/accounts/{channel}/{id}", self.account_delete),
             web.get("/api/config", self.config_get),
             web.patch("/api/config", self.config_patch),
+            web.get("/api/login/options", self.login_options),
             web.post("/api/login/{channel}", self.login_start),
+            web.post("/api/accounts/{channel}/import", self.cookie_import),
             web.get("/api/login/s/{sid}", self.login_state),
             web.get("/api/login/s/{sid}/screen", self.login_screen),
             web.post("/api/login/s/{sid}/input", self.login_input),

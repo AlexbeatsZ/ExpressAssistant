@@ -56,6 +56,8 @@ def eta_from(*texts: str | None) -> str:
 
 def section_of(item: dict) -> str:
     """移植自 App sectionKeyOf，并在最前面加「待取件」。"""
+    if is_done(item):
+        return "done"
     state, num = item.get("state", -1), item.get("stateNum", 0)
     if not is_done(item) and state != 4 and num not in range(108, 112):
         if item.get("pickupCode") or PICKUP_HINT_RE.search(item.get("latestText") or ""):
@@ -82,10 +84,21 @@ SECTION_LABELS = {
 
 
 def is_done(item: dict) -> bool:
-    return item.get("state") == 3 or item.get("stateNum") == 107
+    if item.get("state") == 3 or item.get("stateNum") == 107:
+        return True
+    if item.get("source") == "pdd":
+        # 订单列表有时只给「拼过 N 次」等营销文案；以明确的最新取件终态纠正分区。
+        text = item.get("latestText") or ""
+        if any(w in text for w in ("已取走", "已完成取件", "快件领取成功")):
+            return True
+        if text.startswith("已签收") and not re.search(r"驿站|快递柜|代收|待取件", text):
+            return True
+    return False
 
 
 def state_label(item: dict) -> str:
+    if is_done(item) and item.get("state") != 3 and item.get("stateNum") != 107:
+        return "已签收"
     if item.get("stateName"):
         return item["stateName"]
     return {0: "运输中", 1: "已揽件", 3: "已签收", 4: "已拒签", 5: "派送中"}.get(item.get("state", -1), "未知")

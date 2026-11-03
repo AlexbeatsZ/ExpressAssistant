@@ -1,4 +1,4 @@
-"""启动：uv run express-server [--host 0.0.0.0] [--port 8765] [--data ./data]"""
+"""启动：uv run express-server [--host 0.0.0.0] [--port 18765] [--data ./data]"""
 
 from __future__ import annotations
 
@@ -35,7 +35,8 @@ async def _run(args: argparse.Namespace) -> None:
         store.save_config()
     bm = BrowserManager(channel=args.browser or None, headless=not args.headed)
     engine = SyncEngine(store, bm)
-    api = Api(store, engine, LoginManager(bm, store))
+    logins = LoginManager(bm, store, args.login_mode)
+    api = Api(store, engine, logins)
     runner = web.AppRunner(api.app(), access_log=None)
     await runner.setup()
     await web.TCPSite(runner, args.host, args.port).start()
@@ -50,18 +51,22 @@ async def _run(args: argparse.Namespace) -> None:
         await asyncio.Event().wait()
     finally:
         task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
         await runner.cleanup()
+        await logins.shutdown()
         await bm.close()
 
 
 def main() -> None:
     p = argparse.ArgumentParser(prog="express-server", description="快递助手 PC 服务器")
     p.add_argument("--host", default="0.0.0.0", help="监听地址，默认 0.0.0.0（局域网可访问）；只给本机用填 127.0.0.1")
-    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--port", type=int, default=18765)
     p.add_argument("--data", default=str(Path(__file__).resolve().parent.parent / "data"), help="数据目录")
     p.add_argument("--token", default="", help="指定访问令牌（默认首次启动随机生成并保存）")
     p.add_argument("--browser", default="", help="浏览器通道：msedge / chrome；默认依次尝试 Edge、Chrome、Playwright Chromium")
     p.add_argument("--headed", action="store_true", help="显示浏览器窗口（调试用）")
+    p.add_argument("--login-mode", choices=("auto", "local", "remote"), default="auto",
+                   help="登录方式：auto 在桌面本机访问时打开浏览器窗口；local 固定本机窗口；remote 固定远程画面")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
