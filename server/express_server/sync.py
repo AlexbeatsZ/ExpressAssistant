@@ -9,7 +9,7 @@ import time
 from typing import Any
 
 from .browser import BrowserManager
-from .channels import jd, pdd, taobao, xiaomi
+from .channels import cainiao, jd, pdd, taobao, xiaomi
 from .parse import eta_from, is_done, now_ms, pickup_code_from, pickup_code_from_points
 from .store import CHANNEL_LABELS, CHANNELS, Store
 
@@ -27,6 +27,8 @@ class SyncEngine:
         self.bm = bm
         self.lock = asyncio.Lock()
         self.status: dict[str, Any] = {"running": False, **store.data.get("lastSync", {})}
+        self._cainiao: list[dict] | None = None
+        self._cainiao_error = ""
 
     def _cookies(self, acc: dict) -> list[dict]:
         name = acc["payload"].get("profile")
@@ -65,6 +67,12 @@ class SyncEngine:
                     items += got
                     goods.update(g)
                     traces.update(tr)
+                    # 菜鸟「我的包裹」：按收件手机号覆盖所有进驿站的件，是驿站取件码的来源；失败不影响淘宝订单
+                    try:
+                        self._cainiao = (self._cainiao or []) + await cainiao.fetch(acc, self._cookies(acc))
+                    except Exception as e:  # noqa: BLE001 - 记录后保留旧的菜鸟数据
+                        log.warning("cainiao %s fail: %s", acc.get("label"), e)
+                        self._cainiao_error = str(e)[:200]
                 else:
                     profile = self.store.profile_path(acc["payload"].get("profile") or f"{channel}-{acc['id']}.json")
                     mod = jd if channel == "jd" else pdd
@@ -95,6 +103,7 @@ class SyncEngine:
     async def _sync(self, channels: tuple[str, ...], started: int) -> dict:
         st = self.store
         old = {i["mailNo"]: i for i in st.items}
+        self._cainiao, self._cainiao_error = None, ""
         active = [c for c in channels if st.accounts(c, enabled_only=True)]
         results = dict(zip(active, await asyncio.gather(*(self._channel(c) for c in active))))
         statuses = []
@@ -122,6 +131,11 @@ class SyncEngine:
                 lst = lst + [i for i in old.values() if i.get("source") == "pdd" and c in results]
             for it in lst:
                 merged.setdefault(it["mailNo"], it)
+        self._merge_cainiao(merged, old, channels, "taobao" in results)
+        if self._cainiao is not None or self._cainiao_error:
+            codes = sum(1 for i in self._cainiao or [] if i.get("pickupCode"))
+            statuses.append({"channel": "cainiao", "label": "菜鸟驿站", "count": len(self._cainiao or []),
+                             "error": self._cainiao_error, "codes": codes})
         for c, (_, goods, traces, _) in results.items():
             st.merge_goods(goods)
             for mail, pts in traces.items():
@@ -155,6 +169,23 @@ class SyncEngine:
         self.status.update(st.data["lastSync"])
         log.info("sync done total=%d %s", len(final), msg)
         return {"ok": True, **st.data["lastSync"]}
+
+    def _merge_cainiao(self, merged: dict, old: dict, channels: tuple[str, ...], taobao_ran: bool) -> None:
+        """菜鸟包裹：已有的件补取件码与驿站；其它渠道没有的未完成件单独加入（来源「菜鸟」）。"""
+        old_cn = [i for i in old.values() if i.get("source") == "cainiao"]
+        if taobao_ran:
+            pkgs = self._cainiao if self._cainiao is not None else old_cn
+        else:
+            pkgs = old_cn if "taobao" not in channels else []
+        for pkg in pkgs:
+            it = merged.get(pkg["mailNo"])
+            if it is not None and it.get("source") != "cainiao":
+                if pkg.get("station"):
+                    it["station"] = pkg["station"]
+                if pkg.get("pickupCode") and not is_done(it):
+                    it["pickupCode"] = pkg["pickupCode"]
+            elif not is_done(pkg) or pkg["mailNo"] in old:
+                merged.setdefault(pkg["mailNo"], pkg)
 
     # ───────── 轨迹：在途件补抓（取件码多在最后一条轨迹里） ─────────
 

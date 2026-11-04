@@ -57,9 +57,18 @@
 - 这说明该会话尚未取到可用身份码，不能据此断言接口已接通完整功能或二维码已可出示。下一步需用户在官方入口检查身份码开通/认证状态，之后再验证码字段和有效期。不要猜测字段并生成误导性的二维码。
 - 补充探测（同日）：`verifyVersion` 换 V1 或不传，结果相同（五个 false）。公开项目 `pickup-assistant` 只定义了身份码接口名，界面并未实现身份码出示；GitHub 代码搜索未找到其他实现。结论：身份码依赖账号先在淘宝 App 官方入口完成开通/认证，开通前无法取得码内容。
 
-## 菜鸟「我的包裹」取件码（候选数据源，未接入）
+## 菜鸟「我的包裹」取件码（已接入，0.1.2）
 
-- `mtop.cainiao.lpc.packageservice.queryPdsPackageDataList` 1.0（备份 `mtop.cainiao.pcs.packageservice.queryPackageDataList`），data=`{"pageSize":50,"currentPage":N,"needTemporality":false,"needDynInfo":"{'needFindTemporality':true,'needAppointment':true}"}`，按 `totalPage` 翻页；淘宝会话 + 现有 mtop 签名即可调用。
-- 真实会话返回 13 件，包含京东、闲鱼等「末端非淘包裹」：按收件手机号覆盖所有进菜鸟驿站的件，不限淘宝订单。
-- 取件码字段：`packageStation.authCode`；值为占位 `needSms` 时回退 `feature.stationOrderPickUpCode`（feature 是 JSON 字符串，也可能有 `featureObj`）；两者都没有则表示需短信验证，不能当码展示。当前 13 件全部已签收，authCode 均为 `needSms` 或空，待取件状态下的真实码尚未验证。
-- 菜鸟物流轨迹文本只写「请凭取货码及时取件（查询方式：短信/物流详情页）」，不含码，所以靠轨迹正则拿不到菜鸟驿站的取件码；这个接口是驿站件取件码的主要来源。
+- 依据：菜鸟 Android 8.11.1023 静态分析（Codex 会话，报告在 `~/Documents/Codex/2026-11-04/x/outputs/cainiao-analysis.md`）+ 公开项目 pickup-assistant 的接口名。
+- App 调的是带 `.cn` 的原生接口（需原生 SESSION/ECODE/WUA）；淘宝 H5 网关和菜鸟 H5 页面里调 `.cn` 都返回 `FAIL_SYS_SESSION_EXPIRED` / `FAIL_SYS_UNAUTHORIZED_ENTRANCE`。不带 `.cn` 的同名接口可用淘宝 H5 会话调用，服务器只用这一类。
+- `channels/cainiao.py`：`queryPdsPackageDataList`（失败回退 `pcs.queryPackageDataList`），pageSize 50 按 `totalPage` 翻页；随淘宝账号一起同步，失败只记状态、保留旧菜鸟数据，不影响淘宝订单。
+- 取件码规则（与 App 一致）：`packageStation.authCode` 优先；仅当它是 `needSms` 时才用 `feature.stationOrderPickUpCode`（feature 先解析 JSON，或用 `featureObj`）；终值是占位或为空则不展示。`logisticsStatus` 为 SIGN/CANCEL/REJECT/RETURN/LOST 时不展示码。
+- 合并：按运单号命中已有件时补 `pickupCode`（以菜鸟为准）与 `station`；其它渠道没有的件只在未完成时加入，来源标「菜鸟」。京东件的 mailNo 是订单号，可能与菜鸟的京东运单号重复出现一次。
+- 菜鸟物流轨迹只写「请凭取货码及时取件（查询方式：短信/物流详情页）」，不含码，轨迹正则拿不到驿站码，这个接口是主要来源。
+- 已验证：真实会话 13 件、6 件淘宝件补上驿站名；全部已签收，所以待取件状态下的真实码尚未验证。`needSms` 的核验流程（queryauth / queryverifytypelist / checkverificationcode）都是 `.cn` 原生接口，未实现。
+
+## 在线身份码（已接入展示，账号未下发码）
+
+- `GET /api/identity-code`：用第一个启用的淘宝账号调 `mtop.cainiao.nbpickup.identitycode.get`（appName=GUOGUO、verifyVersion=V2）。有 `model.identityCode` 时由服务器用 segno 生成二维码 SVG，`model.expireTime` 为剩余秒数，网页到期自动重新获取；没有码时返回认证标志与提示。身份码是取件凭证，不进 MCP。
+- 当前账号五个认证标志都是 false，未下发码。授权入口 `bffengine.pickup.identity.entry.get.cn` / `agreement.sign.cn` 都是原生接口且会改变账号状态，服务器不调用；需要用户在官方 App 打开一次身份码并完成授权后再验证。
+- 离线身份码（`native.identitycode.get.cn` 下发 finalKeyStr 等材料，本地 HMAC-SHA1 生成 CS8 前缀码）需要原生会话，不做。

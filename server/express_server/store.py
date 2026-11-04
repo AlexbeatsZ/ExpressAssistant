@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 CHANNELS = ("xiaomi", "jd", "taobao", "pdd")
-CHANNEL_LABELS = {"xiaomi": "小米", "jd": "京东", "taobao": "淘宝", "pdd": "拼多多"}
+CHANNEL_LABELS = {"xiaomi": "小米", "jd": "京东", "taobao": "淘宝", "pdd": "拼多多", "cainiao": "菜鸟"}
 
 
 class Store:

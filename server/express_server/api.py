@@ -13,9 +13,11 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import segno
 from aiohttp import web
 
 from . import __version__
+from .channels import cainiao
 from .login import LoginManager
 from .parse import SECTION_LABELS, is_done, section_of, state_label
 from .store import CHANNEL_LABELS, CHANNELS, Store
@@ -58,6 +60,7 @@ class Api:
             "goodsImage": g.get("imageUrl", ""),
             "goodsCount": g.get("count", ""),
             "phone": it.get("phone", ""),
+            "station": it.get("station", ""),
         }
         if with_trace:
             tr = self.store.trace(it["mailNo"]) or {}
@@ -89,7 +92,7 @@ class Api:
         pick = [r for r in rows if r["section"] == "pickup"]
         if pick:
             lines.append("待取件：")
-            lines += [f"- {r['goodsName'] or r['companyName']}｜取件码 {r['pickupCode'] or '未识别'}｜{r['latestText'][:80]}" for r in pick]
+            lines += [f"- {r['goodsName'] or r['companyName']}｜取件码 {r['pickupCode'] or '未识别'}" + (f"｜{r['station']}" if r["station"] else "") + f"｜{r['latestText'][:80]}" for r in pick]
         moving = [r for r in rows if r["section"] in ("delivering", "shipped", "notshipped")]
         if moving:
             lines.append("在途：")
@@ -241,6 +244,19 @@ class Api:
         await self.logins.input(s, await r.json())
         return _json(s.public())
 
+    async def identity_code(self, _r):
+        """菜鸟在线身份码（不进 MCP：它是取件凭证）。"""
+        acc = next(iter(self.store.accounts("taobao", enabled_only=True)), None)
+        if not acc:
+            return _json({"available": False, "message": "需要先登录淘宝账号"})
+        try:
+            res = await cainiao.identity_code(self.engine._cookies(acc))
+        except RuntimeError as e:
+            return _json({"available": False, "message": str(e)})
+        if res.get("available"):
+            res["qrSvg"] = segno.make(res["code"], error="m").svg_inline(scale=8, border=2, dark="#000", light="#fff", omitsize=True)
+        return _json(res)
+
     async def cookie_import(self, r: web.Request):
         c = r.match_info["channel"]
         if c not in CHANNELS:
@@ -278,7 +294,7 @@ class Api:
 
     async def _tool(self, name: str, args: dict) -> Any:
         if name == "pickup_codes":
-            return [{k: r[k] for k in ("pickupCode", "goodsName", "companyName", "mailNo", "latestText", "latestTime", "source")}
+            return [{k: r[k] for k in ("pickupCode", "station", "goodsName", "companyName", "mailNo", "latestText", "latestTime", "source")}
                     for r in self.listing("pickup")]
         if name == "list_packages":
             return self.listing(args.get("section") or "active", args.get("query") or "")
@@ -349,6 +365,7 @@ class Api:
             web.get("/api/express/{mailNo}", self.express_one),
             web.post("/api/express/{mailNo}/hide", self.hide),
             web.get("/api/pickup", self.pickup),
+            web.get("/api/identity-code", self.identity_code),
             web.get("/api/summary", self.summary),
             web.get("/api/sync", self.sync_get),
             web.post("/api/sync", self.sync_post),

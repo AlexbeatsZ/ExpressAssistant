@@ -100,3 +100,34 @@ def test_taobao_pickup_scan():
     assert taobao._scan_pickup({"facilityCode": "769901", "orderCode": "LP0084"}) == ""
     assert taobao._scan_pickup({"pickUpCode": "needSms", "station": {"pickUpCode": "8-3-2201"}}) == "8-3-2201"
     assert taobao._scan_pickup({"pickUpCode": "null"}) == ""
+
+
+def test_cainiao_pickup_rules():
+    from express_server.channels import cainiao
+
+    pkg = {"mailNo": "YT1", "logisticsStatus": "STA_INBOUND", "logisticsStatusDesc": "待取件", "partnerName": "圆通",
+           "packageStation": {"authCode": "8-2-3017", "stationName": "复旦南区驿站"}}
+    assert cainiao.pickup_code(pkg) == "8-2-3017"
+    sms = {"packageStation": {"authCode": "needSms"}, "feature": '{"stationOrderPickUpCode":"5-1-22"}'}
+    assert cainiao.pickup_code(sms) == "5-1-22"
+    assert cainiao.pickup_code({"packageStation": {"authCode": "needSms"}}) == ""
+    assert cainiao.pickup_code({"packageStation": {"authCode": "A1"}, "feature": '{"stationOrderPickUpCode":"B2"}'}) == "A1"
+    it = cainiao.to_item(pkg, {"id": "t", "label": "tb"})
+    assert it["pickupCode"] == "8-2-3017" and it["station"] == "复旦南区驿站" and it["state"] == 5
+    signed = cainiao.to_item({**pkg, "logisticsStatus": "SIGN"}, {"id": "t"})
+    assert signed["pickupCode"] == "" and signed["state"] == 3
+
+
+def test_merge_cainiao_enriches_and_adds():
+    from express_server.sync import SyncEngine
+
+    eng = SyncEngine.__new__(SyncEngine)
+    eng._cainiao = [
+        {"mailNo": "SF1", "pickupCode": "6-1", "station": "驿站A", "state": 5, "stateNum": 105, "source": "cainiao"},
+        {"mailNo": "JT9", "pickupCode": "7-2", "station": "驿站A", "state": 5, "stateNum": 105, "source": "cainiao"},
+        {"mailNo": "OLD", "pickupCode": "", "state": 3, "stateNum": 107, "source": "cainiao"},
+    ]
+    merged = {"SF1": {"mailNo": "SF1", "state": 0, "stateNum": 104, "source": "taobao"}}
+    eng._merge_cainiao(merged, {}, ("taobao",), True)
+    assert merged["SF1"]["pickupCode"] == "6-1" and merged["SF1"]["station"] == "驿站A"
+    assert merged["JT9"]["source"] == "cainiao" and "OLD" not in merged

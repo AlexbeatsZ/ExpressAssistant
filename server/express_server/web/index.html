@@ -70,6 +70,7 @@ pre{background:var(--chip);border-radius:10px;padding:10px;overflow-x:auto;font-
   <header>
     <div class="bar">
       <h1>快递助手</h1>
+      <button id="idBtn" title="菜鸟驿站身份码">身份码</button>
       <button id="syncBtn" class="primary">同步</button>
       <button id="setBtn" title="账号与设置">账号</button>
     </div>
@@ -80,6 +81,7 @@ pre{background:var(--chip);border-radius:10px;padding:10px;overflow-x:auto;font-
   <div id="list" class="list"></div>
 </div>
 
+<dialog id="idcode"><div class="dlg" id="idBody"></div></dialog>
 <dialog id="detail"><div class="dlg" id="detailBody"></div></dialog>
 <dialog id="settings"><div class="dlg" id="settingsBody"></div></dialog>
 <dialog id="login"><div class="dlg" id="loginBody"></div></dialog>
@@ -141,7 +143,7 @@ function card(r) {
     ${code}
     <div class="title">${esc(r.goodsName || r.companyName || r.mailNo)}</div>
     <div class="meta"><span class="chip state ${r.section === "abnormal" ? "bad" : ""}">${esc(r.sectionLabel === r.status ? r.status : r.sectionLabel + " · " + r.status)}</span>
-      <span class="chip">${esc(r.sourceLabel)}</span>${r.eta ? `<span class="chip">预计 ${esc(r.eta)}</span>` : ""}</div>
+      <span class="chip">${esc(r.sourceLabel)}</span>${r.station ? `<span class="chip">${esc(r.station)}</span>` : ""}${r.eta ? `<span class="chip">预计 ${esc(r.eta)}</span>` : ""}</div>
     <div class="latest">${esc(r.latestText)}</div>
     <div class="muted">${esc(r.companyName)} ${esc(r.mailNo)}${r.latestTime ? " · " + esc(r.latestTime) : ""}</div>
   </div></div>`;
@@ -158,7 +160,7 @@ async function openDetail(no, refresh) {
     ${d.pickupCode ? `<div class="code big"><span>取件码</span><b>${esc(d.pickupCode)}</b></div>` : ""}
     <div class="meta"><span class="chip state">${esc(d.status)}</span><span class="chip">${esc(d.sourceLabel)}${d.account ? " · " + esc(d.account) : ""}</span>
       ${d.eta ? `<span class="chip">预计 ${esc(d.eta)}</span>` : ""}${d.goodsCount ? `<span class="chip">${esc(d.goodsCount)}</span>` : ""}</div>
-    <p class="muted">${esc(d.companyName)} ${esc(d.mailNo)}</p>
+    <p class="muted">${esc(d.companyName)} ${esc(d.mailNo)}${d.station ? " · " + esc(d.station) : ""}</p>
     <div class="row"><button id="refreshTrace">刷新轨迹</button><button id="hideItem">从列表移除</button>
       <span class="muted">${d.traceFetchedAt ? "轨迹更新于 " + fmtTime(d.traceFetchedAt) : ""}</span></div>
     <ul class="timeline">${(d.trace || []).map(p => `<li><div>${esc(p.context)}</div><div class="t">${esc(p.time)}</div></li>`).join("") || `<li><div>${esc(d.latestText)}</div><div class="t">${esc(d.latestTime)}</div></li>`}</ul>`;
@@ -178,6 +180,36 @@ $("q").oninput = render;
 
 // ───────── 账号与设置 ─────────
 $("setBtn").onclick = openSettings;
+
+// ───────── 菜鸟身份码（在线码：到期前重新获取） ─────────
+let idTimer = 0;
+$("idBtn").onclick = () => { $("idcode").showModal(); loadIdentity(); };
+$("idcode").addEventListener("close", () => clearTimeout(idTimer));
+async function loadIdentity() {
+  clearTimeout(idTimer);
+  const box = $("idBody");
+  box.innerHTML = `<button class="close" onclick="idcode.close()">×</button><h2>菜鸟驿站身份码</h2><p class="muted">获取中…</p>`;
+  let d;
+  try { d = await api("/api/identity-code"); } catch (e) { d = {available: false, message: e.message}; }
+  if (!$("idcode").open) return;
+  if (!d.available) {
+    box.innerHTML = `<button class="close" onclick="idcode.close()">×</button><h2>菜鸟驿站身份码</h2>
+      <p>${esc(d.message || "暂时取不到身份码")}</p>
+      <p class="muted">逐件的取件码不受影响，照常显示在「待取件」里。</p>
+      <div class="row"><button id="idRetry">重试</button></div>`;
+    $("idRetry").onclick = loadIdentity;
+    return;
+  }
+  const left = d.expireAt ? Math.max(5, Math.round((d.expireAt - Date.now()) / 1000)) : 60;
+  box.innerHTML = `<button class="close" onclick="idcode.close()">×</button><h2>菜鸟驿站身份码</h2>
+    <div style="background:#fff;border-radius:12px;padding:10px;display:flex;justify-content:center">${d.qrSvg}</div>
+    <p style="text-align:center;font:600 18px ui-monospace,Menlo,monospace;letter-spacing:1px;word-break:break-all">${esc(d.code)}</p>
+    <p class="muted" style="text-align:center">${d.name ? esc(d.name) + " · " : ""}约 <span id="idLeft">${left}</span> 秒后自动刷新</p>`;
+  const svg = box.querySelector("svg"); if (svg) { svg.style.width = "min(72vw,300px)"; svg.style.height = "auto"; }
+  let n = left;
+  const tick = () => { n--; const el = $("idLeft"); if (el) el.textContent = Math.max(n, 0); if (n <= 0) loadIdentity(); else idTimer = setTimeout(tick, 1000); };
+  idTimer = setTimeout(tick, 1000);
+}
 async function openSettings() {
   const [accs, cfg, loginOpts] = await Promise.all([api("/api/accounts"), api("/api/config"), api("/api/login/options")]);
   const origin = location.origin;
