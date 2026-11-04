@@ -15,7 +15,7 @@ from pathlib import Path
 from playwright.async_api import Page
 
 from ..browser import BrowserManager, click_text, swipe_up
-from ..parse import first_string, first_string_deep, first_value_deep, time_string
+from ..parse import PDD_COMPLETED, first_string, first_string_deep, first_value_deep, time_string
 
 log = logging.getLogger("pdd")
 
@@ -76,6 +76,21 @@ def _goods(o: dict) -> dict:
     return {"name": name[:200], "imageUrl": pic, "count": f"x{cnt}" if cnt else ""}
 
 
+def resolve_status(o: dict) -> tuple[int, int, str, bool]:
+    prompt = first_string(o, STATUS_KEYS).strip()
+    meaningful = "" if re.fullmatch(r"拼过\d+次", prompt) or prompt.isdigit() else prompt
+    received = str(o.get("shipping_status")) == "2" or str(o.get("receive_time") or "0").isdigit() and int(o.get("receive_time") or 0) > 0
+    if received or meaningful.startswith(PDD_COMPLETED):
+        return 3, 107, meaningful or "已收货", True
+    if any(w in meaningful for w in ("派送", "派件", "正在配送")):
+        return 5, 105, meaningful, False
+    if any(w in meaningful for w in ("待发货", "未发货", "待成团")):
+        return 1, 103, meaningful, False
+    if str(o.get("shipping_status")) == "1" or any(w in meaningful for w in ("待收货", "等待收货", "已发货", "运输", "揽收")):
+        return 0, 104, meaningful or "运输中", False
+    return -1, 0, meaningful or "待更新", False
+
+
 def _parse_order(o: dict, out: dict, goods: dict, account: dict) -> None:
     oid = first_string(o, ORDER_KEYS)
     mail = first_string(o, TRACK_KEYS) or oid
@@ -84,21 +99,14 @@ def _parse_order(o: dict, out: dict, goods: dict, account: dict) -> None:
     status = first_string(o, STATUS_KEYS)
     if any(b in status for b in BAD):
         return
-    if any(k in status for k in ("签收", "已完成", "交易成功", "待评价", "已评价")):
-        state = 3
-    elif any(k in status for k in ("派送", "配送", "派件")):
-        state = 5
-    elif any(k in status for k in ("待发货", "未发货", "待成团")):
-        state = 1
-    else:
-        state = 0
+    state, number, label, received = resolve_status(o)
     key = oid or mail
     out[key] = {
         "id": key, "mailNo": mail, "companyCode": "PDD",
         "companyName": first_string(o, COMPANY_KEYS) or "拼多多快递",
         "latestText": first_string_deep(o, TEXT_KEYS, 4) or status.strip(),
         "latestTime": time_string(first_value_deep(o, TIME_KEYS, 4)),
-        "state": state, "stateName": status.strip()[:60], "stateNum": {3: 107, 5: 105, 1: 103}.get(state, 105),
+        "state": state, "stateName": label[:60], "stateNum": number, "receiptConfirmed": received,
         "provider": "Pinduoduo", "queryChannel": key, "source": "pdd",
         "accountId": account["id"], "accountLabel": account.get("label", ""),
     }

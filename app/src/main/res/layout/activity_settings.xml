@@ -27,65 +27,7 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/row_ai"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="14dp"
-                android:clickable="true"
-                android:focusable="true"
-                app:cardBackgroundColor="?attr/colorSurfaceContainerLow"
-                app:cardCornerRadius="20dp"
-                app:cardElevation="0dp"
-                app:rippleColor="?attr/colorControlHighlight">
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="18dp">
-
-                    <ImageView
-                        android:layout_width="40dp"
-                        android:layout_height="40dp"
-                        android:background="@drawable/bg_icon_circle"
-                        android:padding="9dp"
-                        android:src="@drawable/ic_bird"
-                        app:tint="?attr/colorOnPrimaryContainer" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="12dp"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="云雀"
-                            android:textAppearance="?attr/textAppearanceTitleMedium"
-                            android:textColor="?attr/colorPrimary"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/ai_summary"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text=""
-                            android:textColor="?attr/colorOnSurfaceVariant"
-                            android:textSize="13sp" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="›"
-                        android:textColor="?attr/colorOutline"
-                        android:textSize="26sp" />
-                </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
 
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/row_theme"
@@ -314,16 +256,6 @@
                                 android:textAppearance="?attr/textAppearanceTitleMedium"
                                 android:textColor="?attr/colorOnSurface"
                                 android:textStyle="bold" />
-
-                            <TextView
-                                android:id="@+id/tb_explain"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginStart="10dp"
-                                android:background="?attr/selectableItemBackground"
-                                android:text="淘宝快递同步说明"
-                                android:textColor="?attr/colorPrimary"
-                                android:textSize="12sp" />
                         </LinearLayout>
 
                         <TextView
@@ -451,16 +383,6 @@
                                 android:textAppearance="?attr/textAppearanceTitleMedium"
                                 android:textColor="?attr/colorOnSurface"
                                 android:textStyle="bold" />
-
-                            <TextView
-                                android:id="@+id/xiaomi_explain"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginStart="10dp"
-                                android:background="?attr/selectableItemBackground"
-                                android:text="小米智能助理快递同步说明"
-                                android:textColor="?attr/colorPrimary"
-                                android:textSize="12sp" />
                         </LinearLayout>
 
                         <TextView
@@ -744,7 +666,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="关于云雀"
+                            android:text="关于快递助手"
                             android:textAppearance="?attr/textAppearanceTitleMedium"
                             android:textColor="?attr/colorOnSurface"
                             android:textStyle="bold" />
@@ -848,7 +770,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="支持一下"
+                            android:text="支持项目"
                             android:textAppearance="?attr/textAppearanceTitleMedium"
                             android:textColor="?attr/colorOnSurface"
                             android:textStyle="bold" />

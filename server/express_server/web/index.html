@@ -195,7 +195,6 @@ async function loadIdentity() {
   if (!d.available) {
     box.innerHTML = `<button class="close" onclick="idcode.close()">×</button><h2>菜鸟驿站身份码</h2>
       <p>${esc(d.message || "暂时取不到身份码")}</p>
-      <p class="muted">逐件的取件码不受影响，照常显示在「待取件」里。</p>
       <div class="row"><button id="idRetry">重试</button></div>`;
     $("idRetry").onclick = loadIdentity;
     return;
@@ -204,15 +203,15 @@ async function loadIdentity() {
   box.innerHTML = `<button class="close" onclick="idcode.close()">×</button><h2>菜鸟驿站身份码</h2>
     <div style="background:#fff;border-radius:12px;padding:10px;display:flex;justify-content:center">${d.qrSvg}</div>
     <p style="text-align:center;font:600 18px ui-monospace,Menlo,monospace;letter-spacing:1px;word-break:break-all">${esc(d.code)}</p>
-    <p class="muted" style="text-align:center">${d.name ? esc(d.name) + " · " : ""}约 <span id="idLeft">${left}</span> 秒后自动刷新</p>`;
+    <div class="row"><button id="idRefresh">刷新</button></div>`;
   const svg = box.querySelector("svg"); if (svg) { svg.style.width = "min(72vw,300px)"; svg.style.height = "auto"; }
+  $("idRefresh").onclick = loadIdentity;
   let n = left;
   const tick = () => { n--; const el = $("idLeft"); if (el) el.textContent = Math.max(n, 0); if (n <= 0) loadIdentity(); else idTimer = setTimeout(tick, 1000); };
   idTimer = setTimeout(tick, 1000);
 }
 async function openSettings() {
   const [accs, cfg, loginOpts] = await Promise.all([api("/api/accounts"), api("/api/config"), api("/api/login/options")]);
-  const origin = location.origin;
   $("settingsBody").innerHTML = `<button class="close" onclick="settings.close()">×</button><h2>账号与设置</h2>
     <p class="muted">${loginOpts.localAvailable ? "在这台电脑前使用「本机浏览器登录」，直接在打开的浏览器窗口中操作。" : "服务器没有可用桌面。"} 从其他设备访问时，可导入 Cookie 或使用远程画面登录。</p>
     ${Object.entries(SRC).map(([c, n]) => `<div class="section"><h3>${n}</h3>
@@ -224,10 +223,8 @@ async function openSettings() {
         ${a.lastError ? `<div class="err">${esc(a.lastError)}</div>` : ""}</div>`).join("") || `<p class="muted">未绑定</p>`}
       <div class="row" style="margin-top:0">${loginOpts.localAvailable ? `<button class="add ${loginOpts.defaultMode === "local" ? "primary" : ""}" data-c="${c}" data-mode="local">本机浏览器登录</button>` : ""}<button class="imp ${loginOpts.defaultMode !== "local" ? "primary" : ""}" data-c="${c}">导入 Cookie</button><button class="add" data-c="${c}" data-mode="remote">远程画面登录</button></div></div>`).join("")}
     <div class="section"><h3>自动同步</h3><div class="row"><span>每</span><input id="interval" type="number" min="0" style="width:90px" value="${cfg.syncIntervalMin}"><span>分钟（0 = 关闭）</span><button id="saveInterval">保存</button></div></div>
-    <div class="section"><h3>AI 接口</h3>
-      <p class="muted">MCP（Streamable HTTP）：</p><pre>${esc(origin)}/mcp\nAuthorization: Bearer ${esc(token)}</pre>
-      <p class="muted">REST：</p><pre>curl -H "Authorization: Bearer ${esc(token)}" ${esc(origin)}/api/pickup\ncurl -H "Authorization: Bearer ${esc(token)}" ${esc(origin)}/api/summary</pre>
-      <button id="logout">退出本浏览器</button></div>`;
+    <div class="row"><button id="logout">退出访问</button></div>
+`;
   const box = $("settingsBody");
   box.querySelectorAll(".add").forEach(b => b.onclick = () => startLogin(b.dataset.c, b.dataset.mode));
   box.querySelectorAll(".imp").forEach(b => b.onclick = () => openImport(b.dataset.c));

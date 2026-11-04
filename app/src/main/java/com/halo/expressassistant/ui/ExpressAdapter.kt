@@ -25,6 +25,9 @@ class ExpressAdapter(
     private val rows = mutableListOf<Row>()
     private var page = PAGE_TRANSPORT
     private var allItems: List<ExpressItem> = emptyList()
+    private var searchMode = false
+
+    fun setSearchMode(enabled: Boolean) { searchMode = enabled }
     private var windowStart = -1
     private var windowCount = -1
 
@@ -59,16 +62,22 @@ class ExpressAdapter(
     fun filteredFor(targetPage: Int): List<ExpressItem> = when (targetPage) {
         PAGE_DONE -> allItems.filter { bucket(it) == 3 }
         PAGE_ABNORMAL -> allItems.filter { bucket(it) == 4 }
-        else -> allItems.filter { bucket(it) == 2 || bucket(it) == 0 || bucket(it) == 1 }
+        else -> allItems.filter { bucket(it) in setOf(0, 1, 2, 5) }
     }
 
     private fun rebuild() {
         rows.clear()
+        if (searchMode) {
+            allItems.forEach { rows.add(Row.Item(it)) }
+            notifyDataSetChanged()
+            return
+        }
         when (page) {
             PAGE_TRANSPORT -> {
                 val delivering = allItems.filter { bucket(it) == 2 }
                 val after = allItems.filter { bucket(it) == 0 }
                 val before = allItems.filter { bucket(it) == 1 }
+                val unknown = allItems.filter { bucket(it) == 5 }
                 if (delivering.isNotEmpty()) {
                     rows.add(Row.Header("派送中 · ${delivering.size}"))
                     delivering.forEach { rows.add(Row.Item(it)) }
@@ -80,6 +89,10 @@ class ExpressAdapter(
                 if (before.isNotEmpty()) {
                     rows.add(Row.Header("未发货 · ${before.size}"))
                     before.forEach { rows.add(Row.Item(it)) }
+                }
+                if (unknown.isNotEmpty()) {
+                    rows.add(Row.Header("待更新 · ${unknown.size}"))
+                    unknown.forEach { rows.add(Row.Item(it)) }
                 }
             }
             PAGE_DONE -> {
@@ -119,6 +132,7 @@ class ExpressAdapter(
             "abnormal" -> return 4
         }
         if (item.isCompleted()) return 3
+        if (item.state < 0 && item.stateNum == 0) return 5
         return when (item.stateNum) {
             101, 103 -> 1
             102, 104 -> 0
@@ -184,7 +198,7 @@ class ExpressAdapter(
             binding.traceDivider.visibility = if (showTraceLine) android.view.View.VISIBLE else android.view.View.GONE
             binding.reason.text = reasonText(item)
             binding.reason.visibility = if (page == PAGE_ABNORMAL) android.view.View.VISIBLE else android.view.View.GONE
-            val etaText = item.eta.ifBlank { item.aiEta }
+            val etaText = item.eta
             binding.eta.text = if (etaText.isBlank()) "预计送达" else etaText
             binding.eta.visibility = if (etaText.isNotBlank()) android.view.View.VISIBLE else android.view.View.GONE
             val goodsPic = goods?.imageUrl.orEmpty()

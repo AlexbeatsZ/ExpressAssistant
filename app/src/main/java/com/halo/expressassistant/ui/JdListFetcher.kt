@@ -377,16 +377,18 @@ object JdListFetcher {
                         }
                         val latestTime = prog?.optString("tip") ?: ""
                         val state = when {
-                            statusName.contains("完成") || statusName.contains("签收") -> 3
-                            statusName.contains("待收货") || statusName.contains("等待收货") -> 5
+                            statusName.contains("完成") || statusName.contains("签收") || statusName == "处理成功" -> 3
+                            listOf("派送", "派件", "正在配送").any { statusName.contains(it) || latestText.contains(it) } -> 5
+                            statusName.contains("待收货") || statusName.contains("等待收货") -> 0
                             statusName.contains("待发货") || statusName.contains("出库") -> 1
-                            else -> 0
+                            else -> -1
                         }
                         val stateNum = when (state) {
                             3 -> 107
                             5 -> 105
                             1 -> 103
-                            else -> 105
+                            0 -> 104
+                            else -> 0
                         }
                         val item = ExpressItem(
                             id = orderId,

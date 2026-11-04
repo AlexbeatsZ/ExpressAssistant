@@ -18,7 +18,6 @@ log = logging.getLogger("sync")
 PRIORITY = ("xiaomi", "jd", "taobao", "pdd")
 TRACE_TTL_MS = 30 * 60 * 1000
 TRACE_LIMIT = 25  # 每个账号每次同步最多补抓多少个在途件轨迹（浏览器渠道较慢）
-PDD_DONE_WORDS = ("已评价", "交易成功", "待评价", "已完成", "已签收", "签收")
 
 
 class SyncEngine:
@@ -153,16 +152,19 @@ class SyncEngine:
                     it["latestText"] = prev.get("latestText") or it["latestText"]
                     it["latestTime"] = prev.get("latestTime") or it.get("latestTime", "")
                 it["pickupCode"] = it.get("pickupCode") or prev.get("pickupCode", "")
+                it["receiptConfirmed"] = bool(it.get("receiptConfirmed") or prev.get("receiptConfirmed") or is_done(prev))
                 it["firstSeen"] = prev.get("firstSeen") or started
             else:
                 it["firstSeen"] = started
-            if it.get("source") == "pdd" and it.get("state") != 3 and any(w in it.get("stateName", "") for w in PDD_DONE_WORDS):
-                it["state"], it["stateNum"] = 3, 107
+            if is_done(it):
+                it["state"], it["stateNum"], it["pickupCode"] = 3, 107, ""
             final.append(it)
         st.data["items"] = final
         await self._refresh_traces(final)
         for it in final:
             self._apply_trace(it)
+            if is_done(it):
+                it["state"], it["stateNum"], it["pickupCode"] = 3, 107, ""
         msg = "；".join(f"{s['label']} {s['count']} 件" + (f"（{s['error']}）" if s["error"] else "") for s in statuses) or "没有启用的账号"
         st.data["lastSync"] = {"startedAt": started, "finishedAt": now_ms(), "statuses": statuses, "message": msg, "total": len(final)}
         st.save()

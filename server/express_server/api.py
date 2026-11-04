@@ -25,7 +25,7 @@ from .sync import SyncEngine
 
 log = logging.getLogger("api")
 WEB_DIR = Path(__file__).parent / "web"
-SECTION_ORDER = ("pickup", "delivering", "shipped", "notshipped", "abnormal", "done")
+SECTION_ORDER = ("pickup", "delivering", "shipped", "notshipped", "unknown", "abnormal", "done")
 
 
 def _json(data: Any, status: int = 200) -> web.Response:
@@ -278,7 +278,7 @@ class Api:
         {"name": "pickup_codes", "description": "列出所有待取件的快递及取件码（最常用）：商品、快递公司、取件码、驿站/快递柜位置文字",
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "list_packages", "description": "列出快递，可按分区或关键字过滤。section: pickup 待取件 / delivering 派送中 / shipped 运输中 / "
-                                                 "notshipped 未发货 / abnormal 异常 / done 已完成 / active 全部未完成 / all",
+                                                 "notshipped 未发货 / unknown 待更新 / abnormal 异常 / done 已完成 / active 全部未完成 / all",
          "inputSchema": {"type": "object", "properties": {
              "section": {"type": "string", "description": "分区，默认 active"},
              "query": {"type": "string", "description": "关键字：商品名、单号、快递公司、取件码"}}}},

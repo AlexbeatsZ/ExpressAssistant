@@ -10,13 +10,6 @@ import kotlinx.serialization.json.Json
 object Store {
     private const val PREFS = "express_store"
     private const val KEY_LIST = "items"
-    private const val KEY_AI_BASE = "ai_base"
-    private const val KEY_AI_KEY = "ai_key"
-    private const val KEY_AI_MODEL = "ai_model"
-    private const val KEY_DASHSCOPE_KEY = "dashscope_key"
-    private const val KEY_AI_STYLE = "ai_style"
-    private const val KEY_REPORT_HOUR = "report_hour"
-    private const val KEY_REPORT_MINUTE = "report_minute"
     private const val KEY_KD_KEY = "kd_key"
     private const val KEY_KD_CUSTOMER = "kd_customer"
     private const val KEY_XIAOMI_TOKEN = "xiaomi_token"
@@ -29,11 +22,6 @@ object Store {
     private const val KEY_USE_KD100 = "use_kd100_fallback"
     private const val KEY_USE_ACCESSIBILITY = "use_accessibility"
     private const val KEY_LAST_AUTO_SYNC = "last_auto_sync"
-    private const val KEY_CHAT_HISTORY = "chat_history"
-    private const val KEY_REPORT_SCHEDULES = "report_schedules"
-    private const val KEY_PENDING_REPORT = "pending_report"
-    private const val KEY_REPORT_ISSUE = "report_issue"
-    private const val KEY_REPORT_FIRST_DATE = "report_first_date"
     private const val KEY_HOME_ADDRESS = "home_address"
     private const val KEY_ADDRESSES = "addresses"
     private const val KEY_ACTIVE_ADDRESS_ID = "active_address_id"
@@ -89,7 +77,7 @@ object Store {
             val list = json.decodeFromString<List<ExpressItem>>(raw)
             val clean = list.filterNot { it.mailNo.startsWith("FAKETEST") }
             if (clean.size != list.size) saveItems(context, clean)
-            clean
+            clean.map { if (it.isCompleted()) it.copy(state = 3, stateNum = 107, pickupCode = "", receiptConfirmed = true) else it }
         } catch (e: Throwable) {
             seed().also { saveItems(context, it) }
         }
@@ -97,272 +85,44 @@ object Store {
 
     fun saveItems(context: Context, items: List<ExpressItem>) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_LIST, json.encodeToString(items))
+            putString(KEY_LIST, json.encodeToString(items.map {
+                if (it.isCompleted()) it.copy(state = 3, stateNum = 107, pickupCode = "", receiptConfirmed = true) else it
+            }))
         }
         com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(context)
     }
 
     fun seed(): List<ExpressItem> = emptyList()
 
+    fun manualTraces(context: Context, mailNo: String): List<DetailPoint>? {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("manual_traces", "{}").orEmpty()
+        val cache = runCatching { json.decodeFromString<Map<String, PddTraceCache>>(raw)[mailNo] }.getOrNull() ?: return null
+        return cache.points.takeIf { it.isNotEmpty() && (cache.done || System.currentTimeMillis() - cache.fetchedAt < 3600_000) }
+    }
+
+    fun saveManualTrace(context: Context, mailNo: String, points: List<DetailPoint>, done: Boolean) {
+        if (points.isEmpty()) return
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val caches = runCatching { json.decodeFromString<Map<String, PddTraceCache>>(prefs.getString("manual_traces", "{}").orEmpty()) }
+            .getOrDefault(emptyMap()).toMutableMap()
+        caches[mailNo] = PddTraceCache(System.currentTimeMillis(), points, done)
+        prefs.edit { putString("manual_traces", json.encodeToString(caches)) }
+    }
+
     /** 当前生效的三件套 = 激活配置 */
-    fun aiBase(context: Context): String = activeProfile(context).base.ifBlank { "https://api.deepseek.com" }
-
-    fun aiKey(context: Context): String = activeProfile(context).key
-
-    fun aiModel(context: Context): String = activeProfile(context).model.ifBlank { "deepseek-v4-flash" }
-
-    /** ── AI 配置档案：每家公司可存多套配置（不同模型/不同 Key），切换互不覆盖 ── */
-    const val AI_PROVIDER_DEEPSEEK = "deepseek"
-    const val AI_PROVIDER_QWEN = "qwen"
-
-    @Serializable
-    data class AiProfile(
-        val id: String,
-        val provider: String,
-        val label: String,
-        val base: String = "",
-        val key: String = "",
-        val model: String = ""
-    )
-
-    private const val KEY_AI_PROFILES_V2 = "ai_profiles_v2"
-    private const val KEY_AI_ACTIVE_PROFILE = "ai_active_profile"
-
-    fun providerLabel(provider: String): String = when (provider) {
-        AI_PROVIDER_QWEN -> "千问"
-        AI_PROVIDER_DEEPSEEK -> "深度求索"
-        else -> provider
-    }
-
-    private fun defaultProfile(provider: String, key: String = "") = when (provider) {
-        AI_PROVIDER_QWEN -> AiProfile(
-            id = provider, provider = provider, label = "qwen3.8-flash",
-            base = "https://dashscope.aliyuncs.com/compatible-mode/v1", key = key, model = "qwen3.8-flash"
-        )
-        else -> AiProfile(
-            id = provider, provider = provider, label = "deepseek-v4-flash",
-            base = "https://api.deepseek.com", key = key, model = "deepseek-v4-flash"
-        )
-    }
-
-    /** 全部配置；旧版单配置（按公司一条）自动迁移，DeepSeek 的 Key 沿用旧值 */
-    fun aiProfileList(context: Context): List<AiProfile> {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val raw = prefs.getString(KEY_AI_PROFILES_V2, "") ?: ""
-        if (raw.isNotBlank()) {
-            return runCatching { Json.decodeFromString<List<AiProfile>>(raw) }.getOrNull()
-                ?.takeIf { it.isNotEmpty() } ?: fallbackList(context)
-        }
-        // 迁移 v1：旧 ai_profiles（公司 → 单配置）。注意：此处禁止调 aiKey()/activeProfile()
-        // （它们回到本函数，未落库前会无限递归），旧 Key 直接读原始 prefs
-        val legacyRaw = prefs.getString("ai_profiles", "") ?: ""
-        val legacyKey = prefs.getString(KEY_AI_KEY, "") ?: ""
-        val list = ArrayList<AiProfile>()
-        var migrated = false
-        if (legacyRaw.isNotBlank()) {
-            runCatching {
-                val obj = Json.decodeFromString<Map<String, AiProfileV1>>(legacyRaw)
-                for ((provider, v1) in obj) {
-                    list.add(AiProfile(provider, provider, v1.model.ifBlank { provider }, v1.base, v1.key, v1.model))
-                    migrated = true
-                }
-            }
-        }
-        if (!migrated) {
-            list.add(legacyProfile(context))
-            list.add(defaultProfile(AI_PROVIDER_QWEN))
-        } else if (list.none { it.provider == AI_PROVIDER_QWEN }) {
-            list.add(defaultProfile(AI_PROVIDER_QWEN))
-        }
-        prefs.edit {
-            putString(KEY_AI_PROFILES_V2, Json.encodeToString(list))
-            if (legacyKey.isNotBlank() && (prefs.getString(KEY_AI_KEY, "") ?: "").isBlank()) {
-                putString(KEY_AI_KEY, legacyKey)
-            }
-        }
-        return list
-    }
-
-    @Serializable
-    private data class AiProfileV1(val base: String = "", val key: String = "", val model: String = "")
-
-    private fun legacyProfile(context: Context): AiProfile {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val base = prefs.getString(KEY_AI_BASE, "").orEmpty()
-            .takeUnless { it.isBlank() || it == "https://api.openai.com/v1" }
-            ?: "https://api.deepseek.com"
-        val model = prefs.getString(KEY_AI_MODEL, "").orEmpty()
-            .takeUnless { it.isBlank() || it == "gpt-4o-mini" } ?: "deepseek-v4-flash"
-        return defaultProfile(AI_PROVIDER_DEEPSEEK, prefs.getString(KEY_AI_KEY, "").orEmpty())
-            .copy(base = base, model = model, label = model)
-    }
-
-    private fun fallbackList(context: Context): List<AiProfile> =
-        listOf(
-            legacyProfile(context),
-            defaultProfile(AI_PROVIDER_QWEN)
-        )
-
-    fun activeProfile(context: Context): AiProfile {
-        val list = aiProfileList(context)
-        val activeId = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_AI_ACTIVE_PROFILE, "") ?: ""
-        return list.firstOrNull { it.id == activeId } ?: list.first()
-    }
-
-    fun setActiveProfile(context: Context, id: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_AI_ACTIVE_PROFILE, id)
-        }
-    }
-
-    fun upsertProfile(context: Context, profile: AiProfile) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val list = aiProfileList(context).toMutableList()
-        val idx = list.indexOfFirst { it.id == profile.id }
-        if (idx >= 0) list[idx] = profile else list.add(profile)
-        prefs.edit {
-            putString(KEY_AI_PROFILES_V2, Json.encodeToString(list))
-            if (activeProfile(context).id == profile.id) {
-                putString(KEY_AI_BASE, profile.base)
-                putString(KEY_AI_KEY, profile.key)
-                putString(KEY_AI_MODEL, profile.model)
-            }
-        }
-    }
-
-    /** 返回被删配置是否为激活项（调用方需要重设激活） */
-    fun deleteProfile(context: Context, id: String): Boolean {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val list = aiProfileList(context).toMutableList()
-        val wasActive = activeProfile(context).id == id
-        list.removeAll { it.id == id }
-        if (list.isEmpty()) {
-            list.add(defaultProfile(AI_PROVIDER_DEEPSEEK))
-            list.add(defaultProfile(AI_PROVIDER_QWEN))
-            prefs.edit {
-                remove(KEY_AI_BASE)
-                remove(KEY_AI_KEY)
-                remove(KEY_AI_MODEL)
-                remove("ai_profiles")
-            }
-        }
-        prefs.edit { putString(KEY_AI_PROFILES_V2, Json.encodeToString(list)) }
-        if (wasActive && list.isNotEmpty()) {
-            prefs.edit { putString(KEY_AI_ACTIVE_PROFILE, list.first().id) }
-        }
-        return wasActive
-    }
-
-    fun newProfileId(): String = "p" + System.currentTimeMillis().toString(36)
-
-    /** ── 云雀长期记忆：AI 用工具自行维护的关键事实；注入 system（稳定前缀段，利于缓存命中） ── */
-    private const val KEY_AI_MEMORY = "ai_memory"
-    private const val AI_MEMORY_MAX = 40
-
-    fun aiMemory(context: Context): List<String> {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_AI_MEMORY, "") ?: ""
-        if (raw.isBlank()) return emptyList()
-        return runCatching { Json.decodeFromString<List<String>>(raw) }.getOrDefault(emptyList())
-    }
-
-    fun addAiMemory(context: Context, fact: String): Boolean {
-        val f = fact.trim().take(200)
-        if (f.isEmpty()) return false
-        val list = aiMemory(context).toMutableList()
-        if (list.any { it == f }) return false
-        list.add(f)
-        while (list.size > AI_MEMORY_MAX) list.removeAt(0)
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_AI_MEMORY, Json.encodeToString(list))
-        }
-        return true
-    }
-
-    fun removeAiMemory(context: Context, keyword: String): Int {
-        val kw = keyword.trim()
-        val list = aiMemory(context).toMutableList()
-        val before = list.size
-        val kept = if (kw.isEmpty()) mutableListOf() else list.filterNot { it.contains(kw) }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_AI_MEMORY, Json.encodeToString(kept))
-        }
-        return before - kept.size
-    }
-
-    fun clearAiMemory(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_AI_MEMORY, "")
-        }
-    }
-
-    fun dashScopeKey(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_DASHSCOPE_KEY, "") ?: ""
-
-    fun saveDashScopeKey(context: Context, key: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_DASHSCOPE_KEY, key.trim())
-        }
-    }
-
-    const val AI_STYLE_VICTORIAN = "victorian"
-    const val AI_STYLE_KAWAII = "kawaii"
-    const val AI_STYLE_CLEAN = "clean"
-
-    fun aiStyle(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_AI_STYLE, AI_STYLE_VICTORIAN) ?: AI_STYLE_VICTORIAN
-
-    fun saveAiStyle(context: Context, style: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_AI_STYLE, style)
-        }
-    }
-
-    fun aiStyleLabel(context: Context): String = when (aiStyle(context)) {
-        AI_STYLE_KAWAII -> "可爱云雀"
-        AI_STYLE_CLEAN -> "原本的模样"
-        else -> "维多利亚"
-    }
-
     fun kdKey(context: Context): String =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_KD_KEY, "") ?: ""
 
     fun kdCustomer(context: Context): String =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_KD_CUSTOMER, "") ?: ""
 
-    fun reportTime(context: Context): Pair<Int, Int> {
-        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return p.getInt(KEY_REPORT_HOUR, 8) to p.getInt(KEY_REPORT_MINUTE, 30)
-    }
-
-    fun saveSettings(
-        context: Context,
-        aiBase: String,
-        aiKey: String,
-        aiModel: String,
-        kdKey: String,
-        kdCustomer: String,
-        reportHour: Int,
-        reportMinute: Int,
-        kd100Fallback: Boolean,
-        accessibilityEnabled: Boolean
-    ) {
-        val e = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-        e.putString(KEY_AI_BASE, aiBase)
-        e.putString(KEY_AI_KEY, aiKey)
-        e.putString(KEY_AI_MODEL, aiModel)
-        // 保存的三件套写回激活配置（多配置：只动当前激活项）
-        val ap = activeProfile(context)
-        upsertProfile(context, ap.copy(base = aiBase.trim(), key = aiKey.trim(), model = aiModel.trim()))
-        e.putString(KEY_KD_KEY, kdKey)
-        e.putString(KEY_KD_CUSTOMER, kdCustomer)
-        e.putInt(KEY_REPORT_HOUR, reportHour)
-        e.putInt(KEY_REPORT_MINUTE, reportMinute)
-        e.putBoolean(KEY_USE_KD100, kd100Fallback)
-        e.putBoolean(KEY_USE_ACCESSIBILITY, accessibilityEnabled)
-        e.commit()
+    fun saveConnectionSettings(context: Context, kdKey: String, kdCustomer: String, kd100Fallback: Boolean, accessibilityEnabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
+            putString(KEY_KD_KEY, kdKey)
+            putString(KEY_KD_CUSTOMER, kdCustomer)
+            putBoolean(KEY_USE_KD100, kd100Fallback)
+            putBoolean(KEY_USE_ACCESSIBILITY, accessibilityEnabled)
+        }
     }
 
     fun kd100Fallback(context: Context): Boolean =
@@ -838,88 +598,6 @@ object Store {
         }
     }
 
-    fun chatHistory(context: Context): List<ChatMessage> {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_CHAT_HISTORY, null)
-            ?: return emptyList()
-        return try {
-            json.decodeFromString<List<ChatMessage>>(raw)
-        } catch (e: Throwable) {
-            emptyList()
-        }
-    }
-
-    fun saveChatHistory(context: Context, messages: List<ChatMessage>) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_CHAT_HISTORY, json.encodeToString(messages))
-        }
-    }
-
-    fun clearChatHistory(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            remove(KEY_CHAT_HISTORY)
-        }
-    }
-
-    fun reportSchedules(context: Context): List<ReportSchedule> {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_REPORT_SCHEDULES, null)
-            ?: return emptyList()
-        return try {
-            json.decodeFromString<List<ReportSchedule>>(raw)
-        } catch (e: Throwable) {
-            emptyList()
-        }
-    }
-
-    fun saveReportSchedules(context: Context, schedules: List<ReportSchedule>) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_REPORT_SCHEDULES, json.encodeToString(schedules))
-        }
-    }
-
-    fun pendingReport(context: Context): PendingReport? {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_PENDING_REPORT, null)
-            ?: return null
-        return try {
-            json.decodeFromString<PendingReport>(raw)
-        } catch (e: Throwable) {
-            null
-        }
-    }
-
-    fun savePendingReport(context: Context, report: PendingReport) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_PENDING_REPORT, json.encodeToString(report))
-        }
-    }
-
-    fun clearPendingReport(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            remove(KEY_PENDING_REPORT)
-        }
-    }
-
-    fun reportIssue(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_REPORT_ISSUE, 0)
-
-    fun reportFirstDate(context: Context): Long =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_REPORT_FIRST_DATE, 0L)
-
-    /** 真正生成一篇日报时调用：期数 +1，并记录创刊日期。 */
-    fun nextReportIssue(context: Context): Int {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val next = prefs.getInt(KEY_REPORT_ISSUE, 0) + 1
-        val now = System.currentTimeMillis()
-        val editor = prefs.edit()
-        editor.putInt(KEY_REPORT_ISSUE, next)
-        if (prefs.getLong(KEY_REPORT_FIRST_DATE, 0L) == 0L) {
-            editor.putLong(KEY_REPORT_FIRST_DATE, now)
-        }
-        editor.commit()
-        return next
-    }
-
-    /* ─────────────── 多地址管理（可新增/编辑/删除/切换当前） ─────────────── */
-
     fun addresses(context: Context): List<HomeAddress> {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val raw = prefs.getString(KEY_ADDRESSES, null)
@@ -976,15 +654,12 @@ object Store {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
             putString(KEY_ACTIVE_ADDRESS_ID, id)
         }
-        // 地址切换后让 AI 进度失效重算
-        val items = items(context).map { it.copy(aiProgress = -1, aiEta = "", aiProgressAt = "") }
-        saveItems(context, items)
     }
 
     fun addressById(context: Context, id: String): HomeAddress? =
         addresses(context).firstOrNull { it.id == id }
 
-    /** 当前地址字符串（AI 计算用）；无则回落第一条 */
+    /** 当前地址字符串；无则回落第一条 */
     fun homeAddress(context: Context): String {
         val list = addresses(context)
         if (list.isEmpty()) return ""

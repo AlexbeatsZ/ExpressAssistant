@@ -1,131 +1,44 @@
-# ExpressAssistant
+# 快递助手 · ExpressAssistant
 
-A local-first Android app that aggregates express deliveries from different platforms into one list, with AI daily reports, scheduled reminders, and per-package tracking notifications.
+Android 快递聚合工具：在一个程序里查看快递、取件码和菜鸟身份条形码。电脑服务器独立保存账号与同步数据，提供 REST / MCP 查询和操作接口。手机与服务器均不内置模型、AI 对话或日报。
 
-## Features
+当前维护仓库：[AlexbeatsZ/ExpressAssistant](https://github.com/AlexbeatsZ/ExpressAssistant)，基于 [Halo0sama/ExpressAssistant](https://github.com/Halo0sama/ExpressAssistant)。
 
-- Aggregate "My Express" data from Xiaomi Smart Assistant (scan QR code to log in)
-- Match packages by recipient phone number; bind multiple numbers so Taobao/Cainiao packages also appear
-- Three tabs: In Transit / Completed / Abnormal; in transit split into Delivering / Shipped / Not Shipped
-- Full tracking timeline, estimated arrival time, and transport progress
-- Company icons and long-press card management (track / rename / remove)
-- Package tracking: notification on new updates, background check every 30 minutes
-- AI chat: reads local package data, works with any OpenAI-compatible API (DeepSeek by default)
-- Scheduled daily reports: multiple schedules with once / daily / weekdays / weekends / custom weekday repeat rules
-- Kuaidi100 fallback query (optional)
-- Accessibility import from Cainiao / Taobao pages (optional fallback)
-- AI assistant "Lark" (云雀): tool calls to rename / change status / move sections / toggle tracking / sync, express cards inside replies, preset questions
-- Express calendar: month view marking today and estimated arrival dates
-- AI-powered transport progress and estimated delivery time (uses your saved address)
-- Home address in settings with auto-locate or manual input
-- PC server edition (`server/`): fetches Xiaomi / JD / Taobao / Pinduoduo on its own, shows pickup codes in a web page any device can open, and exposes REST + MCP for AI
-- No ads, no analytics, all data stays on device
+## 手机功能
 
-## Build
-
-Requirements:
-
-- JDK 17
-- Android SDK (compileSdk 36)
-- Android Studio or Gradle CLI
-
-```bash
-./gradlew :app:assembleDebug
-```
-
-The debug APK will be generated at `app/build/outputs/apk/debug/`.
-
-## Usage
-
-1. Open the app, tap sync and scan the QR code to log in with your Xiaomi account.
-2. Bind your recipient phone numbers in Settings > Phone Numbers.
-3. Optional: add a Kuaidi100 key as fallback in Settings > More Connections.
-4. Optional: configure an OpenAI-compatible API in Settings > Daily Reports (DeepSeek by default), then set up scheduled reports.
-5. Long-press any package card to enable tracking, rename, or remove it.
-
-> If Taobao packages do not sync, disable "Order number protection" in Taobao privacy settings and place a new order.
-
-## Privacy
-
-- All package data, login tokens and API keys are stored locally only (SharedPreferences), and are never uploaded to any server.
-- The project has no backend; network requests only go to services you configure yourself (Xiaomi, Kuaidi100, Cainiao, etc.).
-- No real phone numbers, tracking numbers or secrets are included in the code.
-
-## Disclaimer
-
-This project is not affiliated with or endorsed by Xiaomi, Cainiao, Taobao, JD.com, Kuaidi100 or any other company. Interface stability is not guaranteed. Do not use it for commercial purposes.
-
-## Acknowledgments
-
-- DeepSeek v4 flash — development & debugging assistance, and the default AI model for chat and daily reports
-
-## License
-
-[MIT](LICENSE)
-
----
-
-# 快递助手
-
-一个本地优先的 Android 快递聚合应用：把不同平台的快递统一收进一个列表，支持 AI 日报、定时提醒和快递跟踪通知。
-
-## 功能
-
-- 聚合小米智能助理“我的快递”数据（扫码登录小米账号后自动同步）
-- 按手机号聚合：可绑定多个手机号，淘宝/菜鸟件也能进来
-- 在途 / 已完成 / 异常 三页签，在途细分为派送中、已发货、未发货
-- 完整物流轨迹、预计送达时间、运输进度
-- 快递公司图标、长按卡片管理（跟踪 / 改名 / 移除）
-- 快递跟踪：被跟踪的快递有新动态时发通知，后台每 30 分钟检查一次
-- AI 问询：读取本地快递数据，接入任意 OpenAI 兼容接口（默认 DeepSeek）
-- 定时日报：多个定时、仅一次 / 每天 / 工作日 / 周末 / 自定义星期重复规则
-- 快递100 兜底查询（可选）
-- 无障碍导入：从菜鸟裹裹 / 淘宝页面读取快递（可选下策）
-- AI 助手“云雀”：工具调用（改名 / 改状态 / 移分区 / 开关跟踪 / 同步）、回答内贴快递卡片、预制问题
-- 快递日历：月历视图，标记今天与预计到达日期
-- AI 运输进度与预计送达时间（结合你保存的地址）
-- 设置里的“我的地址”：自动定位或手动填写
-- PC 服务器版（`server/`）：独立抓取小米 / 京东 / 淘宝 / 拼多多，网页集中显示取件码，其他设备浏览器即可查看，并提供 REST 与 MCP 接口给 AI 读取
-- 无广告、无统计、数据只存在本地
-
-## 构建
-
-环境要求：
-
-- JDK 17
-- Android SDK（compileSdk 36）
-- Android Studio 或命令行 Gradle
-
-```bash
-./gradlew :app:assembleDebug
-```
-
-生成的 APK 位于 `app/build/outputs/apk/debug/`。
+- 聚合小米、京东、淘宝、拼多多及菜鸟包裹，保留平台账号独立配置。
+- 底部「快递 / 身份码」导航；顶部搜索商品、公司、单号或取件码，搜索包含已完成记录。
+- 在搜索框输入运单号自动识别承运商，点击添加或提交搜索即可保存；相同单号不重复添加。
+- 完成和异常记录从工具栏打开，未知状态显示待更新；有明确派送信号才显示派送中。
+- 物流轨迹、预计送达、取件码、跟踪通知、快递日历和桌面小组件。
+- 菜鸟身份码使用 CODE_128，身份材料与本人会话加密存储并支持续期；初始化通过本机维护 API。
+- 可选快递100查询和无障碍导入；不依赖额外测试组件。
 
 ## 使用
 
-1. 打开 App，点击同步并按提示用小米账号扫码登录。
-2. 在“设置 → 手机号管理”中绑定收件手机号。
-3. 可选：在“更多连接方式”里填快递100 key 作为兜底。
-4. 可选：在“设置 → 快递日报”里填 AI 接口地址和 API Key（默认 DeepSeek），然后配置定时日报。
-5. 长按任意快递卡片即可开启跟踪、改名或移除。
+1. 在设置中登录需要的平台账号，回到快递页下拉同步。
+2. 搜索框可以查历史，也可以识别并添加运单号；长按卡片可改名、跟踪或移除。
+3. 从底部右侧打开身份码。当前身份会话初始化与维护接口见 [API 说明](server/AI_API.md)。独立手机号登录仍在研究，见 [可行性记录](docs/design/cainiao-login.md)。
+4. 需要外部程序管理时，使用电脑服务器的查询和操作接口；日常调用不要求手机在线。
 
-> 淘宝件同步不上时，请在淘宝的隐私设置里关闭“订单号码保护”后再下单。
+## 电脑服务器
 
-## 隐私
+[server/README.md](server/README.md) 介绍独立登录、同步、网页维护和运行方式。[server/AI_API.md](server/AI_API.md) 给出 REST、MCP、鉴权、状态字段、同步结果判断和手机维护接口。公开说明不含真实令牌。
 
-- 所有快递数据、登录令牌、AI Key 都只保存在手机本地（SharedPreferences），不上传任何服务器。
-- 项目本身不包含任何后端，网络请求只发给你自己配置的服务（小米、快递100、菜鸟等）。
-- 代码中不含任何真实手机号、快递单号或密钥。
+## 构建
 
-## 免责声明
+需要 JDK 17、Android SDK 36。构建与检查：
 
-本项目与小米、菜鸟、淘宝、京东、快递100 等公司均无任何隶属或合作关系，不保证接口稳定性。请勿用于商业用途。
+```bash
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease
+```
 
-## 致谢
+个人签名配置放在本地 `.signing/personal.properties` 与对应 keystore，均不进入 Git。未提供私有签名时可使用 `:app:assembleDebug`。
 
-- DeepSeek v4 flash — 开发与调试协助，以及默认的 AI 对话与日报模型
+## 数据
+
+手机账号和快递保存在手机应用目录；菜鸟身份会话使用 AndroidKeyStore 加密。服务器在自己的 `server/data/` 保存账号、浏览器会话、快递和访问令牌。两端独立运行，不自动交换账号或快递。联网查询仍会向所选平台发送必要请求。
 
 ## 许可
 
-[MIT](LICENSE)
+保留上游 MIT 许可及署名，见 [LICENSE](LICENSE)。本项目与各快递或电商平台无隶属关系，第三方接口可能变化。

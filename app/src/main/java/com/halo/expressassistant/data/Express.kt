@@ -7,7 +7,7 @@ data class JdGoods(
     val name: String = "",
     val imageUrl: String = "",
     val count: String = "",
-    /** AI 优化后的短名（厂商+产品名，卡片一行） */
+    /** 简短商品名（厂商+产品名，卡片一行） */
     val shortName: String = ""
 )
 
@@ -53,9 +53,6 @@ data class ExpressItem(
     val notifiedTime: String = "",
     val stateOverride: String = "",
     val partitionOverride: String = "",
-    val aiProgress: Int = -1,
-    val aiEta: String = "",
-    val aiProgressAt: String = "",
     val jumpLinks: String = "",
     /** 数据来源渠道：xiaomi / jd / taobao / pdd */
     val source: String = "xiaomi",
@@ -67,11 +64,15 @@ data class ExpressItem(
     val addressId: String = "",
     /** 取件码（从轨迹文本解析，聚合显示） */
     val pickupCode: String = "",
-    val station: String = ""
+    val station: String = "",
+    val receiptConfirmed: Boolean = false
 ) {
     fun isCompleted(): Boolean {
         if (state == 3 || stateNum in 106..107) return true
+        if (receiptConfirmed) return true
+        if (source == "jd" && stateName in setOf("处理成功", "已完成", "交易完成", "已收货")) return true
         if (source != "pdd") return false
+        if (PddOrderStatus.completedLabel(stateName)) return true
         if (listOf("已取走", "已完成取件", "快件领取成功").any { latestText.contains(it) }) return true
         return latestText.startsWith("已签收") && listOf("驿站", "快递柜", "代收", "待取件").none { latestText.contains(it) }
     }
@@ -93,6 +94,7 @@ data class ExpressItem(
 fun sectionKeyOf(item: ExpressItem): String {
     if (item.partitionOverride.isNotBlank()) return item.partitionOverride
     if (item.isCompleted()) return "done"
+    if (item.state < 0 && item.stateNum == 0) return "unknown"
     return when {
         item.stateNum == 105 || item.stateNum == 106 || item.state == 5 -> "delivering"
         item.stateNum in 106..107 || item.state == 3 -> "done"
@@ -122,17 +124,9 @@ fun progressFor(item: ExpressItem): Int = when (item.stateNum) {
     }
 }
 
-/**
- * 展示用进度：AI 结果 0% 只在“未发货/已揽收”阶段合理，
- * 一旦已经开始运输（状态码 104 及以上）就视为无效，走重算或默认映射。
- */
-fun displayProgress(item: ExpressItem): Int {
-    if (item.state == 3) return 100 // 已签收：进度即 100%，无需 AI 计算
-    val p = item.aiProgress
-    if (p < 0) return -1
-    if (p == 0 && item.stateNum !in 101..103) return -1
-    return p
-}
+/** 从已知物流状态映射展示进度；未知状态不显示数值。 */
+fun displayProgress(item: ExpressItem): Int = if (item.state < 0 && item.stateNum == 0) -1 else progressFor(item)
+
 
 @Serializable
 data class ExpressDetail(

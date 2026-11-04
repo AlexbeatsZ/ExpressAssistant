@@ -37,6 +37,41 @@ def test_eta():
     assert eta_from("预计明天送达") == "明天送达"
 
 
+def test_receipt_fields_override_marketing_and_unknown_is_not_dispatch():
+    for order in ({"order_status_prompt": "拼过2次", "shipping_status": 2},
+                  {"order_status_prompt": "拼过6次", "receive_time": 1780000000}):
+        assert pdd.resolve_status(order) == (3, 107, "已收货", True)
+    assert pdd.resolve_status({"order_status_prompt": "已提货"}) == (3, 107, "已提货", True)
+    assert pdd.resolve_status({"order_status_prompt": "待收货", "shipping_status": 1})[:2] == (0, 104)
+    assert pdd.resolve_status({"order_status_prompt": "拼过2次"})[:2] == (-1, 0)
+    assert pdd.resolve_status({"order_status_prompt": "快递正在派送"})[:2] == (5, 105)
+    assert section_of({"state": -1, "stateNum": 0}) == "unknown"
+    assert section_of({"source": "pdd", "stateName": "已提货"}) == "done"
+    assert section_of({"source": "jd", "stateName": "处理成功"}) == "done"
+    assert section_of({"source": "pdd", "stateName": "拼过2次", "receiptConfirmed": True}) == "done"
+
+
+def test_completed_receipt_evidence_survives_sync(tmp_path):
+    import asyncio
+    from express_server.store import Store
+    from express_server.sync import SyncEngine
+
+    st = Store(tmp_path)
+    st.data["items"] = [{"mailNo": "sample", "source": "pdd", "state": 3, "stateNum": 107,
+                         "receiptConfirmed": True, "pickupCode": "old"}]
+    st.data["accounts"]["pdd"] = [{"id": "p", "enabled": True, "payload": {}}]
+    eng = SyncEngine(st, None)
+
+    async def fresh(_):
+        return [{"mailNo": "sample", "source": "pdd", "state": -1, "stateNum": 0,
+                 "stateName": "拼过2次", "latestText": "拼过2次", "pickupCode": ""}], {}, {}, ""
+
+    eng._channel = fresh
+    asyncio.run(eng.sync(("pdd",)))
+    assert st.items[0]["state"] == 3 and st.items[0]["stateNum"] == 107
+    assert st.items[0]["pickupCode"] == "" and section_of(st.items[0]) == "done"
+
+
 def test_xiaomi_crypto_roundtrip():
     s = json.dumps({"a": "中文"}, ensure_ascii=False)
     assert xiaomi._aes_dec(xiaomi._aes_enc(s)) == s
@@ -49,7 +84,7 @@ def test_jd_convert_and_trace():
            '"wareInfoList":[{"wareName":"小米手环","imageUrl":"http://i","num":1,"skuId":"9"}]},'\
            '{"orderId":"222","orderStatusInfo":{"orderStatusName":"已取消"}}]}})'
     items, goods = jd._convert([jd._jsonp(body)], {"id": "a"})
-    assert list(items) == ["111"] and items["111"]["state"] == 5
+    assert list(items) == ["111"] and items["111"]["state"] == 0
     assert goods["111"]["name"] == "小米手环"
     text = "订单跟踪\n您的快件已签收\n2026-11-03 12:00:00\n快件到达【上海转运中心】\n2026-11-02 08:00:00"
     pts = jd.parse_trace_text(text)

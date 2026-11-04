@@ -496,7 +496,7 @@ class DonePanelActivity : AppCompatActivity() {
 
     /** 到达日期解析（与首页一致）：eta → M月D日 */
     private fun arrivalDateOf(item: ExpressItem): Pair<Int, Int>? {
-        val eta = item.eta.ifBlank { item.aiEta }
+        val eta = item.eta
         if (eta.isBlank()) return null
         val m = Regex("(\\d{1,2})月(\\d{1,2})日").find(eta) ?: return null
         return m.groupValues[1].toInt() to m.groupValues[2].toInt()

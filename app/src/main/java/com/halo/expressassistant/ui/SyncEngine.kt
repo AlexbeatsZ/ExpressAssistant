@@ -120,7 +120,7 @@ object SyncEngine {
         val pddUnion = (preserveOld("pdd", pddResult?.first).orEmpty() + oldItems.values.filter { it.source == "pdd" })
             .distinctBy { it.mailNo }
         pddUnion.forEach { if (!merged.containsKey(it.mailNo)) merged[it.mailNo] = it }
-        oldItems.values.filter { it.source == "cainiao" }.forEach { merged.putIfAbsent(it.mailNo, it) }
+        oldItems.values.filter { it.source in setOf("cainiao", "manual") }.forEach { merged.putIfAbsent(it.mailNo, it) }
 
         val finalList = merged.values.map { item ->
             val old = oldItems[item.mailNo] ?: return@map item
@@ -142,12 +142,10 @@ object SyncEngine {
                 notifiedTime = old.notifiedTime,
                 stateOverride = old.stateOverride,
                 partitionOverride = old.partitionOverride,
-                aiProgress = old.aiProgress,
-                aiEta = old.aiEta,
-                aiProgressAt = old.aiProgressAt,
                 latestText = latestText,
                 latestTime = latestTime,
                 addressId = old.addressId,
+                receiptConfirmed = item.receiptConfirmed || old.receiptConfirmed || old.isCompleted(),
                 pickupCode = item.pickupCode.ifBlank { old.pickupCode }
             )
         }
@@ -179,7 +177,7 @@ object SyncEngine {
         val withCainiao = if (cnResult?.first != null) CainiaoPackages.merge(withTrace, cnResult.first!!) else withTrace
         val finalSaved = (if (hiddenNos.isEmpty()) withCainiao else withCainiao.filterNot { it.mailNo in hiddenNos })
             .map {
-                if (it.isCompleted()) it.copy(state = 3, stateNum = 107, pickupCode = "")
+                if (it.isCompleted()) it.copy(state = 3, stateNum = 107, pickupCode = "", receiptConfirmed = true)
                 else if (it.state == 4 || it.stateNum in 108..111) it.copy(pickupCode = "") else it
             }
         Store.saveItems(act, finalSaved)
@@ -188,24 +186,7 @@ object SyncEngine {
     }
 
     /** 后台任务：商品短名批量优化（不阻塞同步）；每小批完成即落库并回调 onBatch（渐进式外显，建议 reload） */
-    suspend fun optimizeShortNames(act: Context, onBatch: ((Map<String, JdGoods>) -> Unit)? = null) {
-        val v2 = Store.shortOptV2(act)
-        val goodsMap = Store.jdGoods(act)
-        val need = goodsMap.filter { (_, g) ->
-            g.name.length > 12 && (g.shortName.isBlank() || !v2)
-        }
-        if (need.isEmpty()) return
-        GoodsPresentation.batchShorten(act, need.mapValues { it.value.name }) { chunk ->
-            val merged = Store.jdGoods(act).toMutableMap()
-            chunk.forEach { (k, v) ->
-                merged[k] = (merged[k] ?: JdGoods(name = need[k]?.name ?: "")).copy(shortName = v)
-            }
-            Store.saveJdGoods(act, merged)
-            onBatch?.invoke(merged)
-        }
-        Store.setShortOptV2(act, true)
-        Log.i(TAG, "shortName optimized need=${need.size}")
-    }
+
 
     /** 京东：逐账号抓取（一个失败不影响其它账号） */
     private suspend fun fetchJdAll(act: Context): Triple<List<ExpressItem>?, Map<String, JdGoods>, String?> {

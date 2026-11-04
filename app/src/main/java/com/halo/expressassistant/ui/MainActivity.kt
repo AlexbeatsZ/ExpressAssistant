@@ -21,6 +21,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import coil.load
 import coil.transform.CircleCropTransformation
 import com.google.android.material.bottomsheet.BottomSheetDialog
@@ -35,14 +36,11 @@ import com.google.android.material.textfield.TextInputLayout
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import com.halo.expressassistant.TrackingNotifier
-import com.halo.expressassistant.ai.AiClient
 import com.halo.expressassistant.api.KuaiDi100
 import com.halo.expressassistant.api.XiaomiApi
 import com.halo.expressassistant.api.XiaomiSync
-import com.halo.expressassistant.ai.Markdown
 import com.halo.expressassistant.data.ExpressDetail
 import com.halo.expressassistant.data.ExpressItem
-import com.halo.expressassistant.data.PendingReport
 import com.halo.expressassistant.data.Store
 import com.halo.expressassistant.data.displayProgress
 import com.halo.expressassistant.data.sectionKeyOf
@@ -54,7 +52,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import org.json.JSONObject
@@ -67,10 +64,15 @@ import kotlin.math.max
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var adapter: ExpressAdapter
-    private var reportDialog: Dialog? = null
     private var appliedTheme: String = ""
 
-    private var quickActionsExpanded = false
+
+    private lateinit var identityPanel: IdentityPanel
+    private var selectedTab = com.halo.expressassistant.R.id.nav_express
+    private var searchQuery = ""
+    private var recognitionJob: kotlinx.coroutines.Job? = null
+    private var pendingMailNo = ""
+    private var pendingCompany: KuaiDi100.Company? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         Themes.apply(this)
@@ -80,103 +82,72 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         EdgeToEdge.apply(this, binding.root)
         Paper.apply(this, binding.root, binding.toolbar)
-
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3001)
-        }
-
-        adapter = ExpressAdapter(
-            onClick = { item -> openDetail(item) },
-            onLongClick = { item -> showPackageSheet(item) }
-        )
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3001)
+        adapter = ExpressAdapter(onClick = { openDetail(it) }, onLongClick = { showPackageSheet(it) })
         binding.list.layoutManager = LinearLayoutManager(this)
         binding.list.adapter = adapter
-        binding.doneCapsule.setOnClickListener {
-            startActivity(Intent(this, com.halo.expressassistant.ui.DonePanelActivity::class.java))
-        }
-
-        binding.toolbar.navigationIcon = null
-        // 搜索/添加从顶栏移到右下角悬浮箭头（小屏顶栏四个按钮放不下）；展开后点任一项：收起 + 进原弹层
-        binding.quickToggle.setOnClickListener { setQuickActions(!quickActionsExpanded) }
-        binding.actionSearch.setOnClickListener {
-            setQuickActions(false)
-            showSearchSheet()
-        }
-        binding.actionAdd.setOnClickListener {
-            setQuickActions(false)
-            showAddDialog()
-        }
-        binding.actionIdentity.setOnClickListener {
-            setQuickActions(false)
-            startActivity(Intent(this, IdentityActivity::class.java))
-        }
+        binding.swipeRefresh.setOnChildScrollUpCallback { _, _ -> binding.list.canScrollVertically(-1) }
         binding.swipeRefresh.setOnRefreshListener {
-            if (!Store.hasAnyAccount(this)) {
-                binding.swipeRefresh.isRefreshing = false
-                android.widget.Toast.makeText(this, "请先在设置中登录并绑定任一平台账号（小米 / 京东 / 淘宝 / 拼多多）", android.widget.Toast.LENGTH_SHORT).show()
-            } else {
-                syncAll()
-            }
+            if (Store.hasAnyAccount(this)) syncAll()
+            else { binding.swipeRefresh.isRefreshing = false; Toast.makeText(this, "请先登录账号", Toast.LENGTH_SHORT).show() }
         }
-        binding.btnAi.setOnClickListener { startActivity(Intent(this, ChatActivity::class.java)) }
+        identityPanel = IdentityPanel(this)
+        binding.identityPanel.addView(identityPanel.view, ViewGroup.LayoutParams(-1, -1))
+        binding.bottomNavigation.setOnItemSelectedListener { showTab(it.itemId); true }
+        binding.btnDone.setOnClickListener { startActivity(Intent(this, DonePanelActivity::class.java)) }
         binding.btnCalendar.setOnClickListener { showCalendarSheet() }
         binding.btnSettings.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
-
-        reload()
-        maybeAutoSync()
-        if (intent.getBooleanExtra("identity_code", false)) {
-            startActivity(Intent(this, IdentityActivity::class.java))
-        }
-        if (intent.getBooleanExtra("add", false)) {
-            binding.root.post { showAddDialog() }
-        }
-        if (intent.getBooleanExtra("sync_now", false)) {
-            binding.root.post { handleSyncNow() }
-        }
-        binding.list.post {
-            val extra = dp(160)
-            val pad = if (adapter.itemCount == 0) {
-                binding.list.height + dp(120)
-            } else {
-                max(extra, binding.list.height / 2)
+        binding.searchInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                searchQuery = s?.toString()?.trim().orEmpty(); reload(); recogniseInput(searchQuery)
             }
-            binding.list.setPadding(
-                binding.list.paddingLeft,
-                binding.list.paddingTop,
-                binding.list.paddingRight,
-                pad
-            )
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+        binding.searchInput.setOnEditorActionListener { _, action, event ->
+            if (action == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH || event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER && event.action == android.view.KeyEvent.ACTION_UP) { submitSearch(); true } else false
         }
+        binding.btnAddPackage.setOnClickListener { addFromSearch() }
+        selectedTab = savedInstanceState?.getInt("selected_tab") ?: if (intent.getBooleanExtra("identity_code", false)) com.halo.expressassistant.R.id.nav_identity else com.halo.expressassistant.R.id.nav_express
+        binding.bottomNavigation.selectedItemId = selectedTab
+        showTab(selectedTab); reload(); maybeAutoSync()
+        if (intent.getBooleanExtra("sync_now", false)) binding.root.post { handleSyncNow() }
+        if (intent.getBooleanExtra("add", false)) binding.root.post { binding.searchInput.requestFocus() }
         binding.root.post { reportFullyDrawn() }
-
-        // 开屏更新提示：GitHub 有新版本就弹窗（复用设置「检查更新」同一套逻辑），不打断其余初始化
-        binding.root.post {
-            CoroutineScope(Dispatchers.Main).launch {
-                val result = UpdateChecker.check(this@MainActivity)
-                if (result.hasUpdate && !result.downloadUrl.isNullOrBlank()) {
-                    MaterialAlertDialogBuilder(this@MainActivity)
-                        .setTitle("发现新版本 v${result.latestTag}")
-                        .setMessage("当前版本 v${UpdateChecker.versionName(this@MainActivity)}，是否前往下载？")
-                        .setPositiveButton("去下载") { _, _ ->
-                            try {
-                                startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(result.downloadUrl)))
-                            } catch (_: Throwable) {
-                            }
-                        }
-                        .setNegativeButton("下次再说", null)
-                        .show()
-                }
-            }
+        lifecycleScope.launch {
+            val result = UpdateChecker.check(this@MainActivity)
+            if (result.hasUpdate && !result.downloadUrl.isNullOrBlank()) MaterialAlertDialogBuilder(this@MainActivity)
+                .setTitle("发现新版本 v${result.latestTag}").setMessage("当前版本 v${UpdateChecker.versionName(this@MainActivity)}")
+                .setPositiveButton("下载") { _, _ -> startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(result.downloadUrl))) }
+                .setNegativeButton("稍后", null).show()
         }
     }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putInt("selected_tab", selectedTab)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun showTab(tab: Int) {
+        selectedTab = tab
+        val express = tab == com.halo.expressassistant.R.id.nav_express
+        binding.expressPanel.visibility = if (express) View.VISIBLE else View.GONE
+        binding.identityPanel.visibility = if (express) View.GONE else View.VISIBLE
+        binding.toolbarTitle.text = if (express) "快递" else "身份码"
+        binding.btnCalendar.visibility = if (express) View.VISIBLE else View.GONE
+        binding.btnDone.visibility = if (express) View.VISIBLE else View.GONE
+        if (express) identityPanel.hide() else {
+            (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(binding.searchInput.windowToken, 0)
+            binding.searchInput.clearFocus(); identityPanel.show()
+        }
+    }
+
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         if (intent.getBooleanExtra("identity_code", false)) {
-            startActivity(Intent(this, IdentityActivity::class.java))
+            binding.bottomNavigation.selectedItemId = com.halo.expressassistant.R.id.nav_identity
         }
         if (intent.getBooleanExtra("sync_now", false)) {
             binding.root.post { handleSyncNow() }
@@ -195,47 +166,41 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        val theme = Themes.current(this)
-        if (appliedTheme != theme) {
-            appliedTheme = theme
-            recreate()
-            return
-        }
-        Log.d("ExpressReport", "onResume fg=true")
-        isForeground = true
-        reportReady = { showPendingReport() }
-        showPendingReport()
+        if (appliedTheme != Themes.current(this)) { recreate(); return }
         reload()
-        // 打开 App 即刷新小组件：兜底 HyperOS 冻结导致的周期刷新失效
+        if (selectedTab == com.halo.expressassistant.R.id.nav_identity) identityPanel.show()
         com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(this)
-        // 后台静默补抓物流轨迹（10 分钟限流）
-        PddTraceBackfill.backfill(this, CoroutineScope(Dispatchers.Main))
-        // 打开 App 即开始 AI 进度预计算（5 分钟限流；同步后 refreshAllDetails 也会触发）
-        if (Store.hasAnyAccount(this) && System.currentTimeMillis() - lastPrecomputeAt > 5 * 60_000) {
-            CoroutineScope(Dispatchers.Main).launch { runCatching { refreshAllDetails() } }
-        }
+        PddTraceBackfill.backfill(this, lifecycleScope)
     }
 
     override fun onPause() {
+        identityPanel.hide()
         super.onPause()
-        Log.d("ExpressReport", "onPause fg=false")
-        isForeground = false
-        reportReady = null
     }
 
-    /** 首页只显示在途；完成/异常在 DonePanelActivity（右下角胶囊） */
+    /** 首页显示在途；搜索包含历史，工具栏可打开完成/异常列表。 */
     fun reload() {
-        adapter.submit(Store.items(this))
+        val all = Store.items(this)
+        val goods = Store.jdGoods(this)
+        val q = searchQuery.lowercase()
+        val rows = if (q.isBlank()) all else all.filter { item ->
+            listOf(item.mailNo, item.companyName, item.latestText, item.pickupCode, goods[item.mailNo]?.name.orEmpty()).any { it.lowercase().contains(q) }
+        }
+        adapter.setSearchMode(q.isNotBlank()); adapter.submit(rows)
+        val empty = if (q.isNotBlank()) rows.isEmpty() else rows.none { isTransportItem(it) }
+        binding.emptyState.visibility = if (empty) View.VISIBLE else View.GONE
+        binding.emptyState.text = if (q.isNotBlank()) "没有找到快递" else "没有在途快递"
+        if (selectedTab == com.halo.expressassistant.R.id.nav_identity) identityPanel.reloadFromStore()
     }
 
     /** 在途判定（与适配器 bucket 一致）：0/1/2/5 归在途，3 完成、4/108-111 异常 */
     private fun isTransportItem(item: ExpressItem): Boolean {
         when (item.partitionOverride) {
-            "delivering", "shipped", "notshipped" -> return true
+            "delivering", "shipped", "notshipped", "unknown" -> return true
             "done", "abnormal" -> return false
         }
         return when {
-            item.state == 3 -> false
+            item.isCompleted() -> false
             item.state == 4 -> false
             item.stateNum in setOf(106, 107, 108, 109, 110, 111) -> false
             else -> true
@@ -243,7 +208,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun arrivalDateOf(item: ExpressItem): Pair<Int, Int>? {
-        val eta = item.eta.ifBlank { item.aiEta }
+        val eta = item.eta
         if (eta.isBlank()) return null
         val m = Regex("(\\d{1,2})月(\\d{1,2})日").find(eta) ?: return null
         return m.groupValues[1].toInt() to m.groupValues[2].toInt()
@@ -450,7 +415,7 @@ class MainActivity : AppCompatActivity() {
             )
             row.addView(
                 TextView(this).apply {
-                    text = "${item.mailNo} · 预计 ${item.eta.ifBlank { item.aiEta }}"
+                    text = "${item.mailNo} · 预计 ${item.eta}"
                     textSize = 13f
                     setTextColor(onSurfaceVariant())
                 }
@@ -520,7 +485,7 @@ class MainActivity : AppCompatActivity() {
                 spinnerCap.cancel()
                 stopSpinnerIfNeeded()
                 // 下拉刷新只报告「在途包裹」刷新状态；完成/异常后台静默加载，不提示。
-                // 预计算（含 AI 进度）不 await：后台自己跑，每件算完即落库刷组件，不拖「已更新」提示
+                // 轨迹后台补抓，列表同步完成即可停止刷新动画。
                 launch { runCatching { refreshAllDetails() } }
                 val transportCount = Store.items(this@MainActivity).count { isTransportItem(it) }
                 val pddError = report.statuses.firstOrNull { it.channel == "pdd" }?.error
@@ -533,10 +498,6 @@ class MainActivity : AppCompatActivity() {
                 reload()
                 // 同步完成后强制立刻补抓（回填已抓缓存到卡片 + 补抓过期单），防轨迹外显被同步覆盖丢失
                 PddTraceBackfill.backfill(this@MainActivity, this, force = true)
-                // 后台优化卡片短名：每小批 AI 结果出来就落库+立即刷新（渐进式外显，不等整批）
-                CoroutineScope(Dispatchers.Main).launch {
-                    SyncEngine.optimizeShortNames(this@MainActivity) { reload() }
-                }
             } catch (e: Throwable) {
                 android.widget.Toast.makeText(this@MainActivity, e.message ?: "同步失败", android.widget.Toast.LENGTH_LONG).show()
             } finally {
@@ -552,11 +513,7 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var precomputeRunning = false
     @Volatile private var lastPrecomputeAt = 0L
 
-    /**
-     * 打开 App / 同步后的预计算：只拉在途件的详情（完成的不再花时间），4 路并行；
-     * 每件详情到手且进度过期（无值或轨迹有更新）就立刻调 AI 算进度并行落库——
-     * 用户点开卡片时进度已经在库里，不再等 2~5s 的 AI 往返。
-     */
+    /** 同步后并行更新在途件的轨迹。 */
     private suspend fun refreshAllDetails(): Int {
         if (!precomputeMutex.tryLock()) return 0
         try {
@@ -564,13 +521,12 @@ class MainActivity : AppCompatActivity() {
             lastPrecomputeAt = System.currentTimeMillis()
             val all = Store.items(this@MainActivity).toMutableList()
             val targets = all.withIndex().filter { (_, it) ->
-                it.source != "jd" && it.source != "taobao" && it.source != "pdd" &&
+                it.source == "xiaomi" &&
                     it.state != 3 && it.stateNum !in 108..111
             }
             if (targets.isEmpty()) return 0
             val sem = Semaphore(4)
             var updated = 0
-            val aiKey = Store.aiKey(this@MainActivity)
             coroutineScope {
                 for ((i, item) in targets) {
                     launch {
@@ -596,31 +552,6 @@ class MainActivity : AppCompatActivity() {
                                         current = Store.items(this@MainActivity).firstOrNull { it.mailNo == item.mailNo } ?: current
                                     } catch (ignored: Throwable) {
                                     }
-                                }
-                            }
-                            // AI 进度预计算：已完成/异常不算；进度无值或轨迹已更新才算
-                            val needAi = aiKey.isNotBlank() && current.state != 3 && current.stateNum !in 108..111 &&
-                                (current.aiProgress < 0 || current.aiProgressAt != current.latestTime)
-                            if (needAi && trajectory.isNotBlank()) {
-                                try {
-                                    val (progress, eta) = AiClient.computeProgress(
-                                        this@MainActivity, current, trajectory,
-                                        Store.addressForItem(this@MainActivity, current)
-                                    )
-                                    if (progress >= 0) {
-                                        saveMutex.lock()
-                                        try {
-                                            val items2 = Store.items(this@MainActivity).map {
-                                                if (it.mailNo == current.mailNo) {
-                                                    it.copy(aiProgress = progress, aiEta = eta, aiProgressAt = it.latestTime)
-                                                } else it
-                                            }
-                                            Store.saveItems(this@MainActivity, items2)
-                                        } finally {
-                                            saveMutex.unlock()
-                                        }
-                                    }
-                                } catch (ignored: Throwable) {
                                 }
                             }
                         }
@@ -696,82 +627,69 @@ class MainActivity : AppCompatActivity() {
         startActivity(Intent(this, DetailActivity::class.java).putExtra("item", Store.json.encodeToString(item)))
     }
 
-    private fun setQuickActions(expand: Boolean) {
-        quickActionsExpanded = expand
-        binding.quickActions.visibility = if (expand) android.view.View.VISIBLE else android.view.View.GONE
-        binding.quickToggle.animate().rotation(if (expand) 180f else 0f).setDuration(160).start()
+
+
+
+
+    private fun recogniseInput(raw: String) {
+        recognitionJob?.cancel()
+        val mail = com.halo.expressassistant.api.ManualPackages.normalise(raw)
+        pendingMailNo = ""; pendingCompany = null
+        val exists = Store.items(this).any { it.mailNo.equals(mail, true) }
+        if (!com.halo.expressassistant.api.ManualPackages.isWaybill(mail) || exists) {
+            binding.pendingPackage.visibility = View.GONE
+            return
+        }
+        binding.pendingPackage.visibility = View.VISIBLE
+        binding.pendingLabel.text = "$mail · 识别中"
+        recognitionJob = lifecycleScope.launch {
+            kotlinx.coroutines.delay(500)
+            val company = detectCompany(mail)
+            if (com.halo.expressassistant.api.ManualPackages.normalise(searchQuery) != mail) return@launch
+            pendingMailNo = mail; pendingCompany = company
+            binding.pendingLabel.text = "${company?.name?.ifBlank { "快递" } ?: "快递公司待识别"} · $mail"
+        }
     }
 
-    private fun showAddDialog() {
-        val (sheet, container) = Sheets.create(this, "添加快递")
-        container.addView(
-            TextView(this).apply {
-                text = "输入单号，自动识别快递公司"
-                textSize = 13f
-                setTextColor(onSurfaceVariant())
-                setPadding(0, dp(2), 0, dp(12))
-            }
-        )
-        val inputLayout = layoutInflater.inflate(com.halo.expressassistant.R.layout.view_input_outlined, null) as TextInputLayout
-        inputLayout.hint = "快递单号"
-        container.addView(inputLayout)
-        container.addView(
-            MaterialButton(this).apply {
-                text = "添加"
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(14) }
-                setOnClickListener {
-                    val mailNo = inputLayout.editText?.text?.toString()?.trim().orEmpty()
-                    if (mailNo.isEmpty()) {
-                        Toast.makeText(this@MainActivity, "请输入快递单号", Toast.LENGTH_SHORT).show()
-                        return@setOnClickListener
-                    }
-                    sheet.dismiss()
-                    val items = Store.items(this@MainActivity).toMutableList()
-                    CoroutineScope(Dispatchers.Main).launch {
-                        val matched = withContext(Dispatchers.IO) {
-                            if (Store.xiaomiToken(this@MainActivity).isNotEmpty()) {
-                                XiaomiApi.matchCompany(
-                                    this@MainActivity,
-                                    Store.xiaomiToken(this@MainActivity),
-                                    Store.xiaomiCUser(this@MainActivity),
-                                    Store.xiaomiAccountId(this@MainActivity),
-                                    Store.xiaomiOaid(this@MainActivity),
-                                    Store.xiaomiVaid(this@MainActivity),
-                                    mailNo
-                                )?.let { Pair(it.first, it.second) }
-                            } else {
-                                null
-                            }
-                        }
-                        val company = matched?.let { KuaiDi100.Company(it.first, it.second) }
-                            ?: if (Store.kd100Fallback(this@MainActivity)) {
-                                KuaiDi100.detectCompany(mailNo)
-                            } else {
-                                null
-                            }
-                        items.add(
-                            ExpressItem(
-                                System.currentTimeMillis().toString(),
-                                company?.comCode ?: "auto",
-                                company?.name ?: "自动识别",
-                                mailNo,
-                                state = 0,
-                                stateNum = 105,
-                                originalName = company?.name ?: "自动识别"
-                            )
-                        )
-                        Store.saveItems(this@MainActivity, items)
-                        reload()
-                        Toast.makeText(this@MainActivity, "已添加快递 $mailNo", Toast.LENGTH_SHORT).show()
-                    }
+    private suspend fun detectCompany(mail: String): KuaiDi100.Company? {
+        val matched = withContext(Dispatchers.IO) {
+            if (Store.xiaomiToken(this@MainActivity).isBlank()) null else runCatching {
+                XiaomiApi.matchCompany(this@MainActivity, Store.xiaomiToken(this@MainActivity), Store.xiaomiCUser(this@MainActivity),
+                    mailNo = mail, accountId = Store.xiaomiAccountId(this@MainActivity), oaid = Store.xiaomiOaid(this@MainActivity), vaid = Store.xiaomiVaid(this@MainActivity))
+            }.getOrNull()
+        }
+        return matched?.let { KuaiDi100.Company(it.first, it.second) } ?: KuaiDi100.detectCompany(mail)
+    }
+
+    private fun submitSearch() {
+        val mail = com.halo.expressassistant.api.ManualPackages.normalise(searchQuery)
+        val existing = Store.items(this).firstOrNull { it.mailNo.equals(mail, true) }
+        if (existing != null) openDetail(existing)
+        else if (com.halo.expressassistant.api.ManualPackages.isWaybill(mail)) addFromSearch()
+        (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(binding.searchInput.windowToken, 0)
+    }
+
+    private fun addFromSearch() {
+        val mail = com.halo.expressassistant.api.ManualPackages.normalise(searchQuery)
+        if (!com.halo.expressassistant.api.ManualPackages.isWaybill(mail)) return
+        if (Store.items(this).any { it.mailNo.equals(mail, true) }) { reload(); return }
+        recognitionJob?.cancel(); binding.btnAddPackage.isEnabled = false
+        lifecycleScope.launch {
+            try {
+                val company = if (pendingMailNo == mail && pendingCompany != null) pendingCompany else detectCompany(mail)
+                if (Store.items(this@MainActivity).none { it.mailNo.equals(mail, true) }) {
+                    val item = ExpressItem(id = mail, mailNo = mail, companyCode = company?.comCode.orEmpty(),
+                        companyName = company?.name?.ifBlank { "快递" } ?: "快递", source = "manual", state = -1,
+                        stateNum = 0, stateName = "待查询", originalName = company?.name.orEmpty())
+                    Store.saveItems(this@MainActivity, Store.items(this@MainActivity) + item)
+                    Store.restoreHidden(this@MainActivity, mail)
+                    binding.searchInput.setText(""); reload()
+                    Toast.makeText(this@MainActivity, "已添加", Toast.LENGTH_SHORT).show()
+                    withContext(Dispatchers.IO) { runCatching { com.halo.expressassistant.api.ManualPackages.refresh(this@MainActivity, item) } }
+                    reload()
                 }
-            }
-        )
-        container.post { inputLayout.editText?.requestFocus() }
-        sheet.show()
+            } finally { binding.btnAddPackage.isEnabled = true }
+        }
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -849,14 +767,13 @@ class MainActivity : AppCompatActivity() {
         val progressText = TextView(this).apply {
             text = if (item.stateNum in 108..111) "已终止"
             else if (progress >= 0) "运输进度：$progress%"
-            else "运输进度：计算中…"
+            else "待更新"
             textSize = 14f
             setTextColor(primary())
         }
         statusRow.addView(progressText)
         content.addView(statusRow)
-        var etaText: TextView? = null
-        if (item.stateNum !in 108..111) {
+        if (item.stateNum !in 108..111 && progress >= 0) {
             val progressBar = LinearProgressIndicator(this).apply {
                 max = 100
                 isIndeterminate = progress < 0
@@ -866,7 +783,7 @@ class MainActivity : AppCompatActivity() {
                 setTrackColor(MaterialColors.getColor(this@MainActivity, android.R.attr.colorControlNormal, 0))
             }
             content.addView(progressBar)
-            val eta = item.eta.ifBlank { item.aiEta }
+            val eta = item.eta
             if (eta.isNotBlank()) {
                 val etaView = TextView(this).apply {
                     text = "预计送达：$eta"
@@ -874,12 +791,7 @@ class MainActivity : AppCompatActivity() {
                     setTextColor(primary())
                     setPadding(0, dp(6), 0, 0)
                 }
-                etaText = etaView
                 content.addView(etaView)
-            }
-            val statusChanged = item.aiProgressAt.isEmpty() || item.aiProgressAt != item.latestTime
-            if (progress < 0 || statusChanged) {
-                computeAiProgressForSheet(item, progressText, progressBar, etaText)
             }
         }
 
@@ -1029,10 +941,10 @@ class MainActivity : AppCompatActivity() {
         sheet.show()
     }
 
-    /** 写回单件指定地址（并让 AI 进度失效重算） */
+    /** 写回单件指定地址。 */
     private fun setItemAddress(item: ExpressItem, addressId: String) {
         val items = Store.items(this).map {
-            if (it.mailNo == item.mailNo) it.copy(addressId = addressId, aiProgress = -1, aiEta = "", aiProgressAt = "")
+            if (it.mailNo == item.mailNo) it.copy(addressId = addressId)
             else it
         }
         Store.saveItems(this, items)
@@ -1041,138 +953,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** 顶部搜索：按 单号/快递公司/商品名/状态/绑定账号 全文过滤（本地即时） */
-    private fun showSearchSheet() {
-        val (sheet, container) = Sheets.create(this, "搜索快递")
-        val input = layoutInflater.inflate(com.halo.expressassistant.R.layout.view_input_outlined, null) as TextInputLayout
-        input.hint = "单号 / 快递公司 / 商品名 / 状态"
-        container.addView(input)
-        val results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        container.addView(results)
 
-        fun row(item: ExpressItem): android.view.View {
-            val r = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(0, dp(8), 0, dp(8))
-                setBackgroundResource(selectableBackground())
-                isClickable = true
-                setOnClickListener {
-                    sheet.dismiss()
-                    openDetail(item)
-                }
-            }
-            val goods = Store.jdGoods(this@MainActivity)[item.mailNo]
-            val title = TextView(this@MainActivity).apply {
-                text = goods?.name?.takeIf { it.isNotBlank() } ?: item.companyName
-                textSize = 15f
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                setTextColor(MaterialColors.getColor(this@MainActivity, android.R.attr.textColorPrimary, 0))
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-            }
-            val sub = TextView(this@MainActivity).apply {
-                text = "${item.companyName} ${item.mailNo} · ${item.stateName}" +
-                    if (item.accountLabel.isNotBlank()) " · ${item.accountLabel}" else ""
-                textSize = 12f
-                setTextColor(onSurfaceVariant())
-                maxLines = 2
-                ellipsize = android.text.TextUtils.TruncateAt.END
-            }
-            r.addView(title)
-            r.addView(sub)
-            return r
-        }
 
-        fun render(q: String) {
-            results.removeAllViews()
-            if (q.isBlank()) {
-                results.addView(TextView(this@MainActivity).apply {
-                    text = "输入关键字开始搜索（单号/快递公司/商品/状态）"
-                    textSize = 13f
-                    setTextColor(onSurfaceVariant())
-                    setPadding(0, dp(4), 0, 0)
-                })
-                return
-            }
-            val goods = Store.jdGoods(this@MainActivity)
-            // 首页搜索只作用于「在途」（内外隔离：完成/异常在 DonePanelActivity 内搜）
-            val matched = Store.items(this@MainActivity).filter { isTransportItem(it) }.filter {
-                it.mailNo.contains(q, true) || it.companyName.contains(q, true) ||
-                    it.stateName.contains(q, true) || it.accountLabel.contains(q, true) ||
-                    it.latestText.contains(q, true) ||
-                    (goods[it.mailNo]?.name?.contains(q, true) ?: false)
-            }.take(30)
-            if (matched.isEmpty()) {
-                results.addView(TextView(this@MainActivity).apply {
-                    text = "没有匹配的快递"
-                    textSize = 13f
-                    setTextColor(onSurfaceVariant())
-                    setPadding(0, dp(4), 0, 0)
-                })
-                return
-            }
-            matched.forEach { results.addView(row(it)) }
-        }
-        input.editText?.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
-            override fun onTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                render(s?.toString()?.trim() ?: "")
-            }
-        })
-        sheet.show()
-    }
 
-    private fun computeAiProgressForSheet(
-        item: ExpressItem,
-        progressText: TextView,
-        bar: LinearProgressIndicator,
-        etaText: TextView?
-    ) {
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                val detail = withContext(Dispatchers.IO) {
-                    val account = Store.accountForItem(this@MainActivity, item)
-                    val cred = account?.let { Store.parseXiaomiCred(it.payload) } ?: Store.xiaomiCred(this@MainActivity)
-                    com.halo.expressassistant.api.XiaomiDetail.fetchWith(this@MainActivity, item, cred)
-                }
-                val trajectory = detail.data.joinToString("\n") { "${it.time} ${it.context}" }
-                val (progress, eta) = AiClient.computeProgress(
-                    this@MainActivity, item, trajectory,
-                    Store.addressForItem(this@MainActivity, item)
-                )
-                if (progress >= 0) {
-                    val items = Store.items(this@MainActivity).map {
-                        if (it.mailNo == item.mailNo) {
-                            it.copy(
-                                aiProgress = progress,
-                                aiEta = eta,
-                                aiProgressAt = it.latestTime
-                            )
-                        } else {
-                            it
-                        }
-                    }
-                    Store.saveItems(this@MainActivity, items)
-                    // ETA/进度实时跟上：小组件同步刷新（App 内列表已由下方 reload 覆盖）
-                    com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(this@MainActivity)
-                    progressText.text = "运输进度：$progress%"
-                    bar.isIndeterminate = false
-                    bar.setProgressCompat(progress, true)
-                    if (eta.isNotBlank()) {
-                        etaText?.text = "预计送达：$eta"
-                        etaText?.visibility = View.VISIBLE
-                    }
-                    reload()
-                } else {
-                    progressText.text = "运输进度：--"
-                    bar.isIndeterminate = false
-                }
-            } catch (e: Throwable) {
-                progressText.text = "运输进度：--"
-                bar.isIndeterminate = false
-            }
-        }
-    }
 
     private fun updateTracked(item: ExpressItem, tracked: Boolean) {
         if (tracked) Store.ensurePollingDefault(this)
@@ -1275,125 +1058,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showPendingReport() {
-        val pending = Store.pendingReport(this)
-        Log.d("ExpressReport", "showPendingReport pending=${pending != null}")
-        if (pending == null) return
-        val hasInTransit = Store.items(this).any {
-            sectionKeyOf(it) in setOf("delivering", "shipped", "notshipped")
-        }
-        if (!hasInTransit) {
-            Store.clearPendingReport(this)
-            return
-        }
-        showReportCard(pending)
-    }
 
-    private fun showReportCard(pending: PendingReport) {
-        Log.d("ExpressReport", "showReportCard dialog=${reportDialog != null}")
-        if (reportDialog != null) return
-        val overlay = layoutInflater.inflate(com.halo.expressassistant.R.layout.report_overlay, null)
-        Paper.styleTree(this, overlay)
-        overlay.findViewById<TextView>(com.halo.expressassistant.R.id.report_dateline).text =
-            reportDateline(pending.time, pending.issue)
-        renderReportSections(overlay, pending.text)
-        val card = overlay.findViewById<MaterialCardView>(com.halo.expressassistant.R.id.report_card)
-        card.isClickable = true
-        val dialog = Dialog(this)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.setContentView(overlay)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        reportDialog = dialog
-        dialog.setOnDismissListener {
-            if (reportDialog === dialog) reportDialog = null
-        }
-        dialog.show()
 
-        card.alpha = 0f
-        card.rotationY = -90f
-        card.translationY = 180f
-        card.scaleX = 0.85f
-        card.scaleY = 0.85f
-        card.animate()
-            .alpha(1f)
-            .rotationY(0f)
-            .translationY(0f)
-            .scaleX(1f)
-            .scaleY(1f)
-            .setDuration(500)
-            .setInterpolator(DecelerateInterpolator(2f))
-            .start()
 
-        fun dismiss() {
-            Log.d("ExpressReport", "dismiss")
-            Store.clearPendingReport(this)
-            card.animate()
-                .alpha(0f)
-                .translationY(140f)
-                .scaleX(0.9f)
-                .scaleY(0.9f)
-                .setDuration(200)
-                .withEndAction {
-                    if (dialog.isShowing) dialog.dismiss()
-                    if (reportDialog === dialog) reportDialog = null
-                }
-                .start()
-        }
 
-        overlay.setOnClickListener { dismiss() }
-        overlay.findViewById<View>(com.halo.expressassistant.R.id.report_close).setOnClickListener { dismiss() }
-    }
 
-    companion object {
-        @Volatile
-        var isForeground = false
-            private set
 
-        @Volatile
-        private var reportReady: (() -> Unit)? = null
 
-        @JvmStatic
-        fun onReportReady() {
-            reportReady?.invoke()
-            }
-    }
 
-    private fun reportDateline(time: Long, issue: Int): String {
-        val date = SimpleDateFormat("yyyy年M月d日 · EEEE", Locale.CHINA).format(Date(time))
-        if (issue <= 0) return date
-        val first = Store.reportFirstDate(this)
-        val firstText = if (first > 0) {
-            " · 创刊于 " + SimpleDateFormat("M月d日", Locale.CHINA).format(Date(first))
-        } else {
-            ""
-        }
-        return "$date$firstText · 第 $issue 期"
-    }
 
-    private fun renderReportSections(overlay: View, raw: String) {
-        val container = overlay.findViewById<LinearLayout>(com.halo.expressassistant.R.id.report_sections)
-        container.removeAllViews()
-        container.addView(
-            reportMarkdown(raw),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-    }
 
-    private fun reportMarkdown(content: String): TextView = TextView(this).apply {
-        text = Markdown.render(this@MainActivity, content)
-        textSize = 14.5f
-        setTextColor(
-            MaterialColors.getColor(
-                this@MainActivity,
-                com.google.android.material.R.attr.colorOnSurface,
-                0
-            )
-        )
-        setLineSpacing(dp(2).toFloat(), 1.3f)
-        setTextIsSelectable(true)
-    }
 }

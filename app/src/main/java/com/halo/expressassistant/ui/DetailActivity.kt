@@ -19,7 +19,6 @@ import com.google.android.material.card.MaterialCardView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import com.halo.expressassistant.R
-import com.halo.expressassistant.ai.AiClient
 import com.halo.expressassistant.api.KuaiDi100
 import com.halo.expressassistant.api.EtaParser
 import com.halo.expressassistant.api.XiaomiDetail
@@ -125,6 +124,11 @@ class DetailActivity : AppCompatActivity() {
                 addHeader(binding.container, item)
                 binding.container.addView(text("正在加载物流轨迹…"))
                 var detail = when (item.source) {
+                    "manual" -> {
+                        val cached = Store.manualTraces(this@DetailActivity, item.mailNo)
+                        if (cached != null) ExpressDetail(item.mailNo, item.companyName, item.state, item.isCompleted(), cached, item.eta)
+                        else com.halo.expressassistant.api.ManualPackages.refresh(this@DetailActivity, item)
+                    }
                     "jd" -> {
                         // 京东轨迹缓存：有效期内直接显示（秒开），无缓存才走 WebView 抓取并回存
                         val cached = Store.jdTraces(this@DetailActivity, item.mailNo, done = item.state == 3)
@@ -253,21 +257,7 @@ class DetailActivity : AppCompatActivity() {
                         }
                         Store.saveItems(this@DetailActivity, items)
                     }
-                    val statusChanged = item.aiProgressAt.isEmpty() || item.aiProgressAt != item.latestTime
-                    when {
-                        // 已完成：进度即 100%，不再调用 AI 计算（省 2~5s 时延与 token）
-                        item.state == 3 -> {
-                            headerProgressText?.text = "运输进度：100%"
-                            headerProgressBar?.isIndeterminate = false
-                            headerProgressBar?.setProgressCompat(100, true)
-                        }
-                        // 已终止/异常：维持「已终止」文案，无需进度
-                        item.state == 4 || item.stateNum in 108..111 -> {}
-                        item.aiProgress < 0 || statusChanged -> computeAiProgress(
-                            item,
-                            detail.data.joinToString("\n") { "${it.time} ${it.context}" }
-                        )
-                    }
+
                 }
             } catch (e: Throwable) {
                 binding.container.removeAllViews()
@@ -409,14 +399,14 @@ class DetailActivity : AppCompatActivity() {
         val progressText = TextView(this).apply {
             text = if (item.stateNum in 108..111) "已终止"
             else if (progress >= 0) "运输进度：$progress%"
-            else "运输进度：计算中…"
+            else "待更新"
             textSize = 14f
             setTextColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.colorPrimary, Color.BLUE))
         }
         headerProgressText = progressText
         statusRow.addView(progressText)
         content.addView(statusRow)
-        if (item.stateNum !in 108..111) {
+        if (item.stateNum !in 108..111 && progress >= 0) {
             val bar = com.google.android.material.progressindicator.LinearProgressIndicator(this).apply {
                 max = 100
                 isIndeterminate = progress < 0
@@ -435,7 +425,7 @@ class DetailActivity : AppCompatActivity() {
             }
             headerProgressBar = bar
             content.addView(bar)
-            val eta = item.eta.ifBlank { item.aiEta }
+            val eta = item.eta
             if (eta.isNotBlank()) {
                 val etaText = TextView(this).apply {
                     text = "预计送达：$eta"
@@ -739,39 +729,7 @@ class DetailActivity : AppCompatActivity() {
         setTextColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.textColorSecondary, Color.GRAY))
     }
 
-    private suspend fun computeAiProgress(item: ExpressItem, trajectory: String) {
-        val (progress, eta) = AiClient.computeProgress(
-            this, item, trajectory,
-            Store.addressForItem(this, item)
-        )
-        if (progress < 0) {
-            headerProgressText?.text = "运输进度：--"
-            headerProgressBar?.isIndeterminate = false
-            return
-        }
-        val items = Store.items(this).map {
-            if (it.mailNo == item.mailNo) {
-                it.copy(
-                    aiProgress = progress,
-                    aiEta = eta,
-                    aiProgressAt = it.latestTime
-                )
-            } else {
-                it
-            }
-        }
-        Store.saveItems(this, items)
-        // AI ETA 实时外显：落库即刷新桌面小组件（App 内列表在返回首页 onResume 时 reload）
-        com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(this)
-        headerProgressText?.text = "运输进度：$progress%"
-        headerProgressBar?.isIndeterminate = false
-        headerProgressBar?.setProgressCompat(progress, true)
-        if (eta.isNotBlank()) {
-            val displayEta = if (item.eta.isNotBlank()) item.eta else eta
-            headerEtaText?.text = "预计送达：$displayEta"
-            headerEtaText?.visibility = View.VISIBLE
-        }
-    }
+
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 

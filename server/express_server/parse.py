@@ -70,6 +70,8 @@ def section_of(item: dict) -> str:
         return "abnormal"
     if num in (101, 103) or state == 1:
         return "notshipped"
+    if state < 0 and num == 0:
+        return "unknown"
     return "shipped"
 
 
@@ -80,13 +82,18 @@ SECTION_LABELS = {
     "notshipped": "未发货",
     "done": "已完成",
     "abnormal": "异常",
+    "unknown": "待更新",
 }
 
 
 def is_done(item: dict) -> bool:
-    if item.get("state") == 3 or item.get("stateNum") == 107:
+    if item.get("state") == 3 or item.get("stateNum") == 107 or item.get("receiptConfirmed") is True:
+        return True
+    if item.get("source") == "jd" and item.get("stateName") in ("处理成功", "已完成", "交易完成", "已收货"):
         return True
     if item.get("source") == "pdd":
+        if (item.get("stateName") or "").startswith(PDD_COMPLETED):
+            return True
         # 订单列表有时只给「拼过 N 次」等营销文案；以明确的最新取件终态纠正分区。
         text = item.get("latestText") or ""
         if any(w in text for w in ("已取走", "已完成取件", "快件领取成功")):
@@ -94,6 +101,9 @@ def is_done(item: dict) -> bool:
         if text.startswith("已签收") and not re.search(r"驿站|快递柜|代收|待取件", text):
             return True
     return False
+
+
+PDD_COMPLETED = ("已签收", "已收货", "已提货", "已取货", "已取走", "交易成功", "已完成", "待评价", "已评价")
 
 
 def state_label(item: dict) -> str:

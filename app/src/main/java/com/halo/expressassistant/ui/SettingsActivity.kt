@@ -27,7 +27,6 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.TextInputLayout
 import com.halo.expressassistant.R
-import com.halo.expressassistant.ai.Markdown
 import com.halo.expressassistant.api.XiaomiApi
 import com.halo.expressassistant.data.Store
 import com.halo.expressassistant.databinding.ActivitySettingsBinding
@@ -56,12 +55,9 @@ class SettingsActivity : AppCompatActivity() {
         Paper.apply(this, binding.root, binding.toolbar)
         binding.toolbar.setNavigationOnClickListener { finish() }
 
-        binding.rowAi.setOnClickListener { showAiSheet() }
         binding.rowTheme.setOnClickListener { showThemeSheet() }
         binding.rowAddress.setOnClickListener { showAddressSheet() }
         binding.rowXiaomiLogin.setOnClickListener { showXiaomiSheet() }
-        binding.tbExplain.setOnClickListener { showTbExplain() }
-        binding.xiaomiExplain.setOnClickListener { showXiaomiExplain() }
         binding.rowJdLogin.setOnClickListener { showJdSheet() }
         binding.rowTbLogin.setOnClickListener { showTbSheet() }
         binding.rowPddLogin.setOnClickListener { showPddSheet() }
@@ -75,34 +71,12 @@ class SettingsActivity : AppCompatActivity() {
         refreshButtons()
     }
 
-    /** 支持一下：展示微信赞赏码（截图/长按保存即可） */
+    /** 打开当前维护仓库。 */
     private fun showSupportDialog() {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(24), dp(16), dp(24), dp(4))
-        }
-        box.addView(ImageView(this).apply {
-            setImageResource(com.halo.expressassistant.R.drawable.support_qr)
-            layoutParams = LinearLayout.LayoutParams(dp(260), dp(260))
-            contentDescription = "微信赞赏码"
-        })
-        box.addView(TextView(this).apply {
-            text = "如果云雀帮到了你，欢迎请作者喝杯咖啡 ☕\n截图或长按保存二维码即可"
-            gravity = Gravity.CENTER_HORIZONTAL
-            textSize = 13f
-            setTextColor(onSurfaceVariant())
-            setPadding(0, dp(14), 0, 0)
-        })
-        MaterialAlertDialogBuilder(this)
-            .setTitle("支持一下")
-            .setView(box)
-            .setPositiveButton("关闭", null)
-            .show()
+        openUrl("https://github.com/AlexbeatsZ/ExpressAssistant")
     }
 
     private fun refreshButtons() {
-        binding.aiSummary.text = "对话风格：${Store.aiStyleLabel(this)} · 接口 / 日报 / 对话"
         binding.themeSummary.text = themeLabel()
         binding.xiaomiLoginSummary.text = accountSummary(Store.CH_XIAOMI, "小米")
         binding.jdLoginSummary.text = accountSummary(Store.CH_JD, "京东")
@@ -133,8 +107,9 @@ class SettingsActivity : AppCompatActivity() {
         cm.flush()
     }
 
-    private fun addressSummaryLabel(): String {        val list = Store.addresses(this)
-        if (list.isEmpty()) return "未设置 · 用于 AI 计算进度"
+    private fun addressSummaryLabel(): String {
+        val list = Store.addresses(this)
+        if (list.isEmpty()) return "未设置"
         val activeId = Store.activeAddressId(this)
         val a = list.firstOrNull { it.id == activeId } ?: list.first()
         return "${a.label} · ${a.address.take(14)}"
@@ -170,142 +145,6 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    /* ─────────────── 云雀（AI） ─────────────── */
-
-    private fun showAiSheet() {
-        val (sheet, container) = Sheets.create(this, "云雀", "对话风格、接口与对话")
-
-        container.addView(Sheets.sectionTitle(this, "对话风格"))
-        val styleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        container.addView(styleBox)
-        fun renderStyles() {
-            styleBox.removeAllViews()
-            fun add(v: String, label: String) {
-                styleBox.addView(
-                    Sheets.optionRow(this@SettingsActivity, label, null, Store.aiStyle(this@SettingsActivity) == v) {
-                        Store.saveAiStyle(this@SettingsActivity, v)
-                        renderStyles()
-                        Toast.makeText(this@SettingsActivity, "已切换：${Store.aiStyleLabel(this@SettingsActivity)}", Toast.LENGTH_SHORT).show()
-                    }
-                )
-            }
-            add(Store.AI_STYLE_VICTORIAN, "维多利亚")
-            add(Store.AI_STYLE_KAWAII, "可爱云雀")
-            add(Store.AI_STYLE_CLEAN, "原本的模样")
-        }
-        renderStyles()
-
-        val baseInput = outlinedInput("接口地址", Store.aiBase(this))
-        val keyInput = outlinedInput("API Key", Store.aiKey(this), password = true)
-        val modelInput = outlinedInput("模型", Store.aiModel(this))
-
-        container.addView(Sheets.sectionTitle(this, "AI 配置（每家公司可存多套）"))
-        val provBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        container.addView(provBox)
-        fun refreshInputs() {
-            baseInput.editText?.setText(Store.aiBase(this@SettingsActivity))
-            keyInput.editText?.setText(Store.aiKey(this@SettingsActivity))
-            modelInput.editText?.setText(Store.aiModel(this@SettingsActivity))
-        }
-        fun renderProfiles() {
-            provBox.removeAllViews()
-            val profiles = Store.aiProfileList(this@SettingsActivity)
-            val activeId = Store.activeProfile(this@SettingsActivity).id
-            for (p in profiles) {
-                provBox.addView(
-                    Sheets.optionRow(this@SettingsActivity, p.label, "${Store.providerLabel(p.provider)} · ${p.model.ifBlank { "未设模型" }}", p.id == activeId) {
-                        Store.setActiveProfile(this@SettingsActivity, p.id)
-                        renderProfiles()
-                        refreshInputs()
-                        Toast.makeText(this@SettingsActivity, "已切换：${p.label}，对话风格与记忆保留", Toast.LENGTH_SHORT).show()
-                    }
-                )
-            }
-            provBox.addView(
-                Sheets.optionRow(this@SettingsActivity, "＋ 新增配置", "添加一套接口配置，随时切换", false) {
-                    showAddProfileDialog(this@SettingsActivity) { renderProfiles(); refreshInputs() }
-                }
-            )
-            for (i in 0 until profiles.size) {
-                val row = provBox.getChildAt(i)
-                val target = profiles[i]
-                row.setOnLongClickListener {
-                    MaterialAlertDialogBuilder(this@SettingsActivity)
-                        .setTitle("删除配置「${target.label}」")
-                        .setMessage("该套接口配置将被移除，无法恢复。")
-                        .setPositiveButton("删除") { _, _ ->
-                            Store.deleteProfile(this@SettingsActivity, target.id)
-                            renderProfiles()
-                            refreshInputs()
-                        }
-                        .setNegativeButton("取消", null)
-                        .show()
-                    true
-                }
-            }
-        }
-        renderProfiles()
-
-        container.addView(Sheets.sectionTitle(this, "接口设置（编辑当前激活配置）"))
-        container.addView(baseInput)
-        container.addView(keyInput)
-        container.addView(modelInput)
-
-        container.addView(Sheets.divider(this))
-        container.addView(sheetNavRow("定时日报", "设置多个定时与重复规则", R.drawable.ic_schedule) {
-            startActivity(Intent(this@SettingsActivity, ChatActivity::class.java).putExtra("open_schedule", true))
-        })
-        container.addView(sheetNavRow("云雀记忆", "已记住 ${Store.aiMemory(this).size} 条 · 点击清空", R.drawable.ic_settings) {
-            MaterialAlertDialogBuilder(this@SettingsActivity)
-                .setTitle("清空云雀记忆")
-                .setMessage("将删除云雀长期记住的所有事实（\n${Store.aiMemory(this).joinToString("\n") { "· $it" }.ifEmpty { "暂无记忆" }}\n），无法恢复。")
-                .setPositiveButton("清空") { _, _ ->
-                    Store.clearAiMemory(this@SettingsActivity)
-                    Toast.makeText(this@SettingsActivity, "记忆已清空", Toast.LENGTH_SHORT).show()
-                }
-                .setNegativeButton("取消", null)
-                .show()
-        })
-        container.addView(sheetNavRow("清空对话记录", "删除云雀的所有聊天历史", R.drawable.ic_delete) {
-            MaterialAlertDialogBuilder(this@SettingsActivity)
-                .setTitle("清空对话记录")
-                .setMessage("将删除云雀的所有聊天历史，无法恢复。")
-                .setPositiveButton("清空") { _, _ ->
-                    Store.clearChatHistory(this@SettingsActivity)
-                    Toast.makeText(this@SettingsActivity, "已清空", Toast.LENGTH_SHORT).show()
-                }
-                .setNegativeButton("取消", null)
-                .show()
-        })
-
-        container.addView(
-            MaterialButton(this).apply {
-                text = "保存接口设置"
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(16) }
-                setOnClickListener {
-                    Store.saveSettings(
-                        this@SettingsActivity,
-                        baseInput.editText?.text?.toString()?.trim().orEmpty(),
-                        keyInput.editText?.text?.toString()?.trim().orEmpty(),
-                        modelInput.editText?.text?.toString()?.trim().orEmpty(),
-                        Store.kdKey(this@SettingsActivity),
-                        Store.kdCustomer(this@SettingsActivity),
-                        Store.reportTime(this@SettingsActivity).first,
-                        Store.reportTime(this@SettingsActivity).second,
-                        Store.kd100Fallback(this@SettingsActivity),
-                        Store.accessibilityEnabled(this@SettingsActivity)
-                    )
-                    Toast.makeText(this@SettingsActivity, "已保存", Toast.LENGTH_SHORT).show()
-                    sheet.dismiss()
-                }
-            }
-        )
-
-        sheet.show()
-    }
 
     /* ─────────────── 主题外观 ─────────────── */
 
@@ -556,15 +395,10 @@ class SettingsActivity : AppCompatActivity() {
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply { topMargin = dp(16) }
                 setOnClickListener {
-                    Store.saveSettings(
+                    Store.saveConnectionSettings(
                         this@SettingsActivity,
-                        Store.aiBase(this@SettingsActivity),
-                        Store.aiKey(this@SettingsActivity),
-                        Store.aiModel(this@SettingsActivity),
                         kdKey.editText?.text?.toString()?.trim().orEmpty(),
                         kdCustomer.editText?.text?.toString()?.trim().orEmpty(),
-                        Store.reportTime(this@SettingsActivity).first,
-                        Store.reportTime(this@SettingsActivity).second,
                         swKd.isChecked,
                         swA11y.isChecked
                     )
@@ -579,56 +413,12 @@ class SettingsActivity : AppCompatActivity() {
     /* ─────────────── 关于云雀 ─────────────── */
 
     private fun showAboutSheet() {
-        val (sheet, container) = Sheets.create(this, "关于云雀", "本地优先的四源快递聚合与私人仓管")
-        val intro = """
-            # 云雀 · 快递助手
-
-            云雀是一个**本地优先**的 Android 快递聚合应用：它把散落在小米、京东、淘宝/菜鸟、拼多多四个平台里的快递，合并成**属于你自己**的一份列表。它不只是一个查件工具，更是一位会说话的私人仓管。
-
-            ## 四源融合
-
-            - 小米智能助理、京东订单中心、淘宝/菜鸟、拼多多，四套登录可任意组合
-            - 按运单号合并去重，小米字段优先；任一渠道失败不影响其他渠道
-            - 全部数据只保存在手机本地，不经过任何“云雀服务器”
-
-            ## 商品溯源
-
-            把“这是什么快递”回答到底：物流单号会被解析成**真实的商品名、图片和数量**，首页卡片直接显示商品缩略图与短名，而不是冰冷的承运商和单号。
-
-            ## 聚合取件码
-
-            从各渠道轨迹里自动提取取件码、取货码、提货码、驿站码，直接显示在卡片上。取件时不用再翻找各平台的短信和通知。
-
-            ## 云雀 AI
-
-            - 三种对话风格：维多利亚 / 可爱云雀 / 原本的模样
-            - 可以读快递、改名称、改状态、移动分区、开关跟踪、触发同步
-            - 结合轨迹与收件地址，计算运输进度和预计送达
-            - 回答里可以直接贴出快递卡片
-
-            ## 定时日报
-
-            每天定时生成一份“报纸”风格早报：**有在途快递时才生成**，期数真实累计；没有在途的早晨，云雀不会打扰你。
-
-            ## 小组件与主题
-
-            - 桌面小组件：动态行列、状态筛选、暖纸主题
-            - 主题：莫奈取色 / 温暖纸感 / 自定义，纸感强度与昼夜可分别设置
-
-            ---
-
-            > 数据是你的行李，不是平台的货物。
-        """.trimIndent()
-        container.addView(
-            TextView(this).apply {
-                text = Markdown.render(this@SettingsActivity, intro)
-                textSize = 15f
-                setTextColor(MaterialColors.getColor(this@SettingsActivity, com.google.android.material.R.attr.colorOnSurface, 0))
-                setLineSpacing(dp(3).toFloat(), 1.3f)
-                setPadding(0, dp(6), 0, 0)
-                setTextIsSelectable(true)
-            }
-        )
+        val (sheet, container) = Sheets.create(this, "关于快递助手")
+        container.addView(TextView(this).apply {
+            text = "快递助手 v${UpdateChecker.versionName(this@SettingsActivity)}\nAlexbeatsZ/ExpressAssistant"
+            textSize = 16f
+            setPadding(0, dp(12), 0, dp(20))
+        })
         sheet.show()
     }
 
@@ -655,10 +445,10 @@ class SettingsActivity : AppCompatActivity() {
         container.addView(
             sheetNavRow(
                 "GitHub 仓库",
-                "Halo0sama/ExpressAssistant",
+                "AlexbeatsZ/ExpressAssistant",
                 R.drawable.ic_widget_open
             ) {
-                openUrl("https://github.com/Halo0sama/ExpressAssistant")
+                openUrl("https://github.com/AlexbeatsZ/ExpressAssistant")
             }
         )
         container.addView(Sheets.divider(this))
@@ -690,7 +480,7 @@ class SettingsActivity : AppCompatActivity() {
                             Toast.LENGTH_LONG
                         ).show()
                         sheet.dismiss()
-                        openUrl(result.downloadUrl ?: "https://github.com/Halo0sama/ExpressAssistant/releases/latest")
+                        openUrl(result.downloadUrl ?: "https://github.com/AlexbeatsZ/ExpressAssistant/releases/latest")
                     }
                     result.latestTag != null -> {
                         Toast.makeText(
@@ -922,54 +712,6 @@ class SettingsActivity : AppCompatActivity() {
             .show()
     }
 
-    /** 淘宝快递同步说明（无标题弹层） */
-    private fun showTbExplain() {
-        val (sheet, container) = Sheets.create(this, "")
-        container.addView(
-            TextView(this).apply {
-                text = "淘宝登录在 App 内完成，凭证仅保存在本地；绑定后淘宝件与菜鸟溯源均可同步，可绑定多个淘宝账号。"
-                textSize = 14f
-                setLineSpacing(0f, 1.3f)
-                setTextColor(onSurfaceVariant())
-            }
-        )
-        container.addView(
-            MaterialButton(this).apply {
-                text = "知道了"
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(14) }
-                setOnClickListener { sheet.dismiss() }
-            }
-        )
-        sheet.show()
-    }
-
-    /** 小米智能助理快递同步说明（标题后小字点击） */
-    private fun showXiaomiExplain() {
-        val (sheet, container) = Sheets.create(this, "")
-        container.addView(
-            TextView(this).apply {
-                text = "从小米接口导入需经shizuku授权\n\n小米登录接入的是小米智能助理的快递能力，绑定成功后可获得以下快递推送：菜鸟裹裹、菜鸟裹裹中的顺丰快递、京东商城的京东物流、小米商城自营卖家快递、小米有品自营卖家快递"
-                textSize = 14f
-                setLineSpacing(0f, 1.3f)
-                setTextColor(onSurfaceVariant())
-            }
-        )
-        container.addView(
-            MaterialButton(this).apply {
-                text = "知道了"
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(14) }
-                setOnClickListener { sheet.dismiss() }
-            }
-        )
-        sheet.show()
-    }
-
     private fun showTaobaoSheet() {
         val (sheet, container) = Sheets.create(this, "淘宝快递同步")
         container.addView(
@@ -996,7 +738,7 @@ class SettingsActivity : AppCompatActivity() {
         val (sheet, container) = Sheets.create(this, "我的地址")
         container.addView(
             TextView(this).apply {
-                text = "支持多个地址。点地址行切换「当前」；AI 用当前地址计算进度，快递件可单独指定地址。"
+                text = ""
                 textSize = 13f
                 setLineSpacing(0f, 1.25f)
                 setTextColor(onSurfaceVariant())
@@ -1647,49 +1389,7 @@ class SettingsActivity : AppCompatActivity() {
             setOnClickListener { onClick() }
         }
 
-    private fun showAddProfileDialog(act: SettingsActivity, onSaved: () -> Unit) {
-        val box = LinearLayout(act).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(act.dp(20), act.dp(8), act.dp(20), 0)
-        }
-        fun field(hint: String, text: String = "", password: Boolean = false): TextInputLayout {
-            val layout = act.layoutInflater.inflate(
-                com.halo.expressassistant.R.layout.view_input_outlined, null
-            ) as TextInputLayout
-            layout.hint = hint
-            layout.editText?.setText(text)
-            if (password) layout.editText?.transformationMethod = android.text.method.PasswordTransformationMethod.getInstance()
-            box.addView(layout)
-            return layout
-        }
-        val labelF = field("配置名称（如：千问语音）")
-        val provF = field("公司：deepseek / qwen", Store.activeProfile(act).provider)
-        val baseF = field("接口地址", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        val keyF = field("API Key", "", password = true)
-        val modelF = field("模型", "qwen3.8-omni-flash")
-        MaterialAlertDialogBuilder(act)
-            .setTitle("新增 AI 配置")
-            .setView(box)
-            .setPositiveButton("保存") { _, _ ->
-                val provider = provF.editText?.text?.toString()?.trim().orEmpty().ifBlank { Store.AI_PROVIDER_QWEN }
-                val label = labelF.editText?.text?.toString()?.trim().orEmpty().ifBlank { modelF.editText?.text?.toString()?.trim().orEmpty().ifBlank { provider } }
-                Store.upsertProfile(
-                    act,
-                    Store.AiProfile(
-                        id = Store.newProfileId(),
-                        provider = provider,
-                        label = label,
-                        base = baseF.editText?.text?.toString()?.trim().orEmpty(),
-                        key = keyF.editText?.text?.toString()?.trim().orEmpty(),
-                        model = modelF.editText?.text?.toString()?.trim().orEmpty()
-                    )
-                )
-                Toast.makeText(act, "已添加「$label」", Toast.LENGTH_SHORT).show()
-                onSaved()
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
+
 
     private fun outlinedInput(
         hint: String,

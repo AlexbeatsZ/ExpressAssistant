@@ -447,21 +447,9 @@ object PddListFetcher {
             Log.i(TAG, "skip closed order: $orderId status=$statusText")
             return
         }
-        val state = when {
-            statusText.contains("签收") || statusText.contains("已完成") ||
-                statusText.contains("交易成功") || statusText.contains("待评价") ||
-                statusText.contains("已评价") -> 3
-            statusText.contains("派送") || statusText.contains("配送") || statusText.contains("派件") -> 5
-            statusText.contains("待发货") || statusText.contains("未发货") ||
-                statusText.contains("待成团") -> 1
-            else -> 0
-        }
-        val stateNum = when (state) {
-            3 -> 107
-            5 -> 105
-            1 -> 103
-            else -> 105
-        }
+        val resolved = com.halo.expressassistant.data.PddOrderStatus.resolve(obj)
+        val state = resolved.state
+        val stateNum = resolved.number
         val latestText = PddCapture.firstStringDeep(obj, TRACK_KEYS_TEXT, 4).ifBlank { statusText.trim() }
         val latestTime = PddCapture.timeString(PddCapture.firstValueDeep(obj, TRACK_KEYS_TIME, 4))
         val companyName = PddCapture.firstString(obj, COMPANY_KEYS).ifBlank { "拼多多快递" }
@@ -474,7 +462,8 @@ object PddListFetcher {
             latestText = latestText,
             latestTime = latestTime,
             state = state,
-            stateName = statusText.trim().take(60),
+            stateName = resolved.label.take(60),
+            receiptConfirmed = resolved.received,
             provider = "Pinduoduo",
             stateNum = stateNum,
             queryChannel = orderId.ifBlank { mailNo },

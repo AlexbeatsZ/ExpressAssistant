@@ -93,9 +93,6 @@ object XiaomiSync {
                     notifiedTime = old.notifiedTime,
                     stateOverride = old.stateOverride,
                     partitionOverride = old.partitionOverride,
-                    aiProgress = old.aiProgress,
-                    aiEta = old.aiEta,
-                    aiProgressAt = old.aiProgressAt,
                     jumpLinks = if (item.jumpLinks.isBlank()) old.jumpLinks else item.jumpLinks
                 )
             } else {

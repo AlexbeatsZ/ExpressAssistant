@@ -21,6 +21,9 @@ object KuaiDi100 {
     private val json = Json { ignoreUnknownKeys = true }
 
     data class Company(val comCode: String, val name: String)
+    private val companyNames = mapOf("shunfeng" to "顺丰速运", "zhongtong" to "中通快递", "yuantong" to "圆通速递",
+        "shentong" to "申通快递", "yunda" to "韵达快递", "jtexpress" to "极兔速递", "jd" to "京东物流",
+        "ems" to "EMS", "youzhengguonei" to "邮政快递包裹", "debangkuaidi" to "德邦快递", "shunfengkuaiyun" to "顺丰快运")
 
     suspend fun detectCompany(mailNo: String): Company? {
         val url = "https://www.kuaidi100.com/autonumber/auto?num=${mailNo}"
@@ -35,7 +38,11 @@ object KuaiDi100 {
                     val arr = json.parseToJsonElement(text).jsonArray
                     if (arr.isEmpty()) null else {
                         val obj = arr[0].jsonObject
-                        Company(obj["comCode"]?.jsonPrimitive?.content ?: "", obj["name"]?.jsonPrimitive?.content ?: "")
+                        val code = obj["comCode"]?.jsonPrimitive?.content.orEmpty()
+                        val name = obj["name"]?.jsonPrimitive?.content.orEmpty().ifBlank {
+                            obj["comName"]?.jsonPrimitive?.content.orEmpty()
+                        }.ifBlank { companyNames[code] ?: code }
+                        Company(code, name)
                     }
                 }
             } catch (e: Throwable) {

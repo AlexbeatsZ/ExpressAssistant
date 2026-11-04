@@ -362,7 +362,7 @@ class ExpressWidgetProvider : AppWidgetProvider() {
          * "预计今…"，而"今天送达"任何档位都放得下；宽松档也一并去掉，保持各件数文案一致。
          */
         private fun timeOf(item: ExpressItem): String {
-            val eta = item.eta.ifBlank { item.aiEta }
+            val eta = item.eta
             if (eta.isNotBlank()) {
                 val hit = Regex("(\\d{1,2}月\\d{1,2}日)").find(eta)?.groupValues?.get(1)
                 if (hit != null) return hit
@@ -411,7 +411,7 @@ class ExpressWidgetProvider : AppWidgetProvider() {
                 sectionKeyOf(it) in setOf("delivering", "shipped", "notshipped")
             }
             if (inTransit == null) return "点击打开快递助手"
-            val eta = etaBody(inTransit.eta.ifBlank { inTransit.aiEta })
+            val eta = etaBody(inTransit.eta)
             return if (eta.isNotBlank()) {
                 // eta 本身多半自带"预计"，这里去前缀再拼，避免"预计 预计今天送达"
                 "${inTransit.companyName} · 预计 $eta"

@@ -58,18 +58,20 @@ def _convert(bodies: list[dict], account: dict) -> tuple[dict[str, dict], dict[s
                 f"&skuid={(wares[0] if wares else {}).get('skuId', '')}&shopid={(o.get('shopInfo') or {}).get('shopId', '')}"
                 "&source=m_inner_orderList.track_orderTrack"
             )
-            if "完成" in name or "签收" in name:
+            if "完成" in name or "签收" in name or name == "处理成功":
                 state = 3
-            elif "待收货" in name or "等待收货" in name:
+            elif any(w in name or w in latest for w in ("派送", "派件", "正在配送")):
                 state = 5
+            elif "待收货" in name or "等待收货" in name:
+                state = 0
             elif "待发货" in name or "出库" in name:
                 state = 1
             else:
-                state = 0
+                state = -1
             items[oid] = {
                 "id": oid, "mailNo": oid, "companyCode": "JDKD", "companyName": "京东商品快递",
                 "latestText": latest, "latestTime": prog.get("tip", ""), "state": state, "stateName": name,
-                "stateNum": {3: 107, 5: 105, 1: 103}.get(state, 105), "provider": "JingDong",
+                "stateNum": {3: 107, 5: 105, 1: 103, 0: 104}.get(state, 0), "provider": "JingDong",
                 "queryChannel": link, "source": "jd", "accountId": account["id"], "accountLabel": account.get("label", ""),
             }
             if wares:
