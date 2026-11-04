@@ -295,7 +295,11 @@ object JdListFetcher {
                 val total = totalNum(captures)
                 Log.i(TAG, "round=$rounds orders=${orders.size} total=$total captures=${captures.size}")
                 if ((total > 0 && orders.size >= total) || rounds > 14) {
-                    finish(orders, null)
+                    val error = if (orders.isEmpty() && captures.isEmpty()) {
+                        if (w.url.orEmpty().contains("plogin")) "京东需要在手机重新登录验证，已保留旧数据"
+                        else "京东未捕获到列表响应，已保留旧数据"
+                    } else null
+                    finish(orders, error)
                     return
                 }
                 swipeUp(w)

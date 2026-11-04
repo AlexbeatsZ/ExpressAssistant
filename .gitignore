@@ -10,6 +10,7 @@ captures/
 *.apk
 *.aab
 outputs/
+.signing/
 
 # PC server
 server/data/

@@ -84,8 +84,8 @@
 
 ## 五、AI 接口（PC 服务器版）
 
-手机端不再提供本地接口（原 `127.0.0.1:8765` NanoHTTPD + `tools/express-cli.py` 已删除）。
-AI 读取与网页查看由 `server/` 的 PC 服务器版提供：它自己登录并抓取四个渠道，接口见 [server/README.md](../server/README.md)。
+原 `127.0.0.1:8765` NanoHTTPD + `tools/express-cli.py` 已删除。2026-11-04 按用户追加的部署需求，在同一手机 APK 增加了 `127.0.0.1:18768` 鉴权维护 API，用于导入、状态、同步和材料续期；不要求单独组件或后台常驻。
+AI 日常读取由 `server/` 的 PC 服务器版提供：它自己登录并抓取四个渠道。服务器 REST/MCP 与手机维护 API 的完整说明见 [server/AI_API.md](../server/AI_API.md)。
 
 ## 六、快递100 与无障碍（兜底）
 

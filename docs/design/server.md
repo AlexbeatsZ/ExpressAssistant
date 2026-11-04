@@ -72,3 +72,7 @@
 - `GET /api/identity-code`：用第一个启用的淘宝账号调 `mtop.cainiao.nbpickup.identitycode.get`（appName=GUOGUO、verifyVersion=V2）。有 `model.identityCode` 时由服务器用 segno 生成二维码 SVG，`model.expireTime` 为剩余秒数，网页到期自动重新获取；没有码时返回认证标志与提示。身份码是取件凭证，不进 MCP。
 - 当前账号五个认证标志都是 false，未下发码。授权入口 `bffengine.pickup.identity.entry.get.cn` / `agreement.sign.cn` 都是原生接口且会改变账号状态，服务器不调用；需要用户在官方 App 打开一次身份码并完成授权后再验证。
 - 离线身份码（`native.identitycode.get.cn` 下发 finalKeyStr 等材料，本地 HMAC-SHA1 生成 CS8 前缀码）需要原生会话，不做。
+
+## 2026-11-04 实机验证修正
+
+本人已登录的菜鸟 App Cookie 可在 H5 网关调用 native.identitycode.get.cn 并多次续期；原淘宝会话的五个 false 不能推出未实名或未授权。菜鸟 App Cookie 对包裹列表不通用，仍用淘宝 H5。手机 v0.8.0 已接身份码；服务器本轮不新增身份码或前端功能。此前章节记录的是当时特定会话的探测结果，不能作为整个 H5 接口不可用的结论。手机实现见 cainiao-mobile.md，AI 接口见 server/AI_API.md。

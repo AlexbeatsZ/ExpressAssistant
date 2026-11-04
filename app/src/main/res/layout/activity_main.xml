@@ -102,6 +102,21 @@
             android:orientation="vertical"
             android:visibility="gone">
 
+            <TextView
+                android:id="@+id/action_identity"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="8dp"
+                android:background="@drawable/bg_floating_bar"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
+                android:paddingHorizontal="22dp"
+                android:paddingVertical="13dp"
+                android:text="身份码"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="15sp" />
+
             <LinearLayout
                 android:id="@+id/action_search"
                 android:layout_width="wrap_content"

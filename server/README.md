@@ -54,6 +54,8 @@ uv run express-server
 
 ## AI 接口
 
+完整调用说明、异步同步判断、字段含义和 AI 行为约定见 [AI_API.md](AI_API.md)。查询和同步可全程通过 API 使用，无需网页。
+
 除 `/api/health` 外都需要请求头 `Authorization: Bearer <令牌>`。
 
 ### MCP（Streamable HTTP）

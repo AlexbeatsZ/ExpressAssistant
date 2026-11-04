@@ -21,4 +21,4 @@ build-backend = "hatchling.build"
 packages = ["express_server"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["express_server", "tests", "README.md", "pyproject.toml", "uv.lock"]
+only-include = ["express_server", "tests", "README.md", "AI_API.md", "pyproject.toml", "uv.lock"]

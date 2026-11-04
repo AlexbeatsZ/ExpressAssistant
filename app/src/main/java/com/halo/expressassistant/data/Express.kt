@@ -66,8 +66,16 @@ data class ExpressItem(
     /** 指定收件地址（HomeAddress.id；空 = 使用全局当前地址） */
     val addressId: String = "",
     /** 取件码（从轨迹文本解析，聚合显示） */
-    val pickupCode: String = ""
+    val pickupCode: String = "",
+    val station: String = ""
 ) {
+    fun isCompleted(): Boolean {
+        if (state == 3 || stateNum in 106..107) return true
+        if (source != "pdd") return false
+        if (listOf("已取走", "已完成取件", "快件领取成功").any { latestText.contains(it) }) return true
+        return latestText.startsWith("已签收") && listOf("驿站", "快递柜", "代收", "待取件").none { latestText.contains(it) }
+    }
+
     fun stateLabel(): String {
         if (stateOverride.isNotBlank()) return stateOverride
         if (stateName.isNotEmpty()) return stateName
@@ -84,6 +92,7 @@ data class ExpressItem(
 
 fun sectionKeyOf(item: ExpressItem): String {
     if (item.partitionOverride.isNotBlank()) return item.partitionOverride
+    if (item.isCompleted()) return "done"
     return when {
         item.stateNum == 105 || item.stateNum == 106 || item.state == 5 -> "delivering"
         item.stateNum in 106..107 || item.state == 3 -> "done"

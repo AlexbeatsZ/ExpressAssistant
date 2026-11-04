@@ -14,6 +14,7 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        PhoneControl.start(this)
         // 15 分钟为 WorkManager 周期下限；Worker 内部按设置（默认关闭 / 用户自定分钟）决定是否执行
         val request = PeriodicWorkRequestBuilder<TrackingWorker>(15, TimeUnit.MINUTES)
             .setConstraints(
@@ -24,6 +25,12 @@ class App : Application() {
             .build()
         WorkManager.getInstance(this)
             .enqueueUniquePeriodicWork("express_tracking", ExistingPeriodicWorkPolicy.UPDATE, request)
+        val renewal = PeriodicWorkRequestBuilder<CainiaoRenewalWorker>(12, TimeUnit.HOURS)
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "cainiao_material_renewal", ExistingPeriodicWorkPolicy.KEEP, renewal
+        )
         // 记录当前前台 Activity：小组件刷新等后台入口需要 Activity 上下文跑四源同步
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {

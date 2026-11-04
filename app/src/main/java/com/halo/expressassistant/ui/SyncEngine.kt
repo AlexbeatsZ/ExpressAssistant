@@ -5,6 +5,7 @@ import android.content.Context
 import android.util.Log
 import com.halo.expressassistant.api.EtaParser
 import com.halo.expressassistant.api.TbOrders
+import com.halo.expressassistant.api.CainiaoPackages
 import com.halo.expressassistant.api.XiaomiSync
 import com.halo.expressassistant.data.ExpressItem
 import com.halo.expressassistant.data.JdGoods
@@ -78,10 +79,12 @@ object SyncEngine {
         // ── 京东（WebView）/ 淘宝（HTTP）/ 拼多多（WebView）三路并行；各自内部逐账号 ──
         val jdDeferred = if (jdOn) async { fetchJdAll(act) } else null
         val tbDeferred = if (tbOn) async { fetchTbAll(act) } else null
+        val cnDeferred = if (tbOn) async { fetchCainiaoAll(act) } else null
         val pddDeferred = if (pddOn) async { fetchPddAll(act, onPddProgress) } else null
 
         val jdResult = jdDeferred?.await()
         val tbResult = tbDeferred?.await()
+        val cnResult = cnDeferred?.await()
         // 小米/京东/淘宝此刻已就绪（主渠道）：立刻通知 UI 停圈，拼多多流式抓取继续后台跑
         // ——否则 PDD 未绑定/无单/页面缓慢时，转圈要拖到 PDD 滚动抓取整个跑完（最坏 75s 超时）
         onFastChannelsDone?.invoke()
@@ -89,6 +92,7 @@ object SyncEngine {
         if (jdOn) statuses.add(ChannelStatus("jd", jdResult?.first?.size ?: 0, jdResult?.third))
         if (tbOn) {
             statuses.add(ChannelStatus("taobao", tbResult?.first?.size ?: 0, tbResult?.second))
+            statuses.add(ChannelStatus("cainiao", cnResult?.first?.size ?: 0, cnResult?.second))
         }
         if (pddOn) statuses.add(ChannelStatus("pdd", pddResult?.first?.size ?: 0, pddResult?.third))
         // 预缓存京东/拼多多订单商品（保留已优化 shortName）
@@ -116,6 +120,7 @@ object SyncEngine {
         val pddUnion = (preserveOld("pdd", pddResult?.first).orEmpty() + oldItems.values.filter { it.source == "pdd" })
             .distinctBy { it.mailNo }
         pddUnion.forEach { if (!merged.containsKey(it.mailNo)) merged[it.mailNo] = it }
+        oldItems.values.filter { it.source == "cainiao" }.forEach { merged.putIfAbsent(it.mailNo, it) }
 
         val finalList = merged.values.map { item ->
             val old = oldItems[item.mailNo] ?: return@map item
@@ -171,7 +176,12 @@ object SyncEngine {
         // 已移除的快递不再复活：合并结果统一过滤用户手动移除过的单号
         // （PDD 并集/各渠道重抓会把服务端仍存在的单再次带回，此前从不查隐藏名单）
         val hiddenNos = Store.xiaomiHidden(act).mapTo(HashSet()) { it.mailNo }
-        val finalSaved = if (hiddenNos.isEmpty()) withTrace else withTrace.filterNot { it.mailNo in hiddenNos }
+        val withCainiao = if (cnResult?.first != null) CainiaoPackages.merge(withTrace, cnResult.first!!) else withTrace
+        val finalSaved = (if (hiddenNos.isEmpty()) withCainiao else withCainiao.filterNot { it.mailNo in hiddenNos })
+            .map {
+                if (it.isCompleted()) it.copy(state = 3, stateNum = 107, pickupCode = "")
+                else if (it.state == 4 || it.stateNum in 108..111) it.copy(pickupCode = "") else it
+            }
         Store.saveItems(act, finalSaved)
         Log.i(TAG, "merged total=${finalSaved.size} statuses=$statuses")
         Report(statuses, finalSaved.size)
@@ -227,6 +237,18 @@ object SyncEngine {
         }
 
     /** 淘宝：逐账号抓取（订单列表 → 过滤 → SSR 详情 → 商品预缓存） */
+    private fun fetchCainiaoAll(act: Context): Pair<List<ExpressItem>?, String?> {
+        val items = linkedMapOf<String, ExpressItem>()
+        var error: String? = null
+        for (account in Store.accounts(act, Store.CH_TAOBAO).filter { it.enabled }) {
+            try { CainiaoPackages.fetch(account).forEach { items[it.mailNo] = it } }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { error = e.message ?: "菜鸟包裹读取失败" }
+        }
+        return (if (items.isEmpty() && error != null) null else items.values.toList()) to error
+    }
+
+    /** 淘宝订单与菜鸟驿站列表分开调用，单个接口失败不阻断另一接口。 */
     private suspend fun fetchTbAll(act: Context): Pair<List<ExpressItem>?, String?> {
         val accounts = Store.accounts(act, Store.CH_TAOBAO).filter { it.enabled }
         val allItems = ArrayList<ExpressItem>()

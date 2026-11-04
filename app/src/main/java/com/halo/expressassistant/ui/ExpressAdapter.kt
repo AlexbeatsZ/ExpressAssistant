@@ -118,6 +118,7 @@ class ExpressAdapter(
             "done" -> return 3
             "abnormal" -> return 4
         }
+        if (item.isCompleted()) return 3
         return when (item.stateNum) {
             101, 103 -> 1
             102, 104 -> 0

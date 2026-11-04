@@ -15,8 +15,8 @@ import org.json.JSONObject
 object UpdateChecker {
 
     private const val TAG = "UpdateChecker"
-    private const val REPO = "Halo0sama/ExpressAssistant"
-    private const val LATEST_API = "https://api.github.com/repos/$REPO/releases/latest"
+    private const val REPO = "AlexbeatsZ/ExpressAssistant"
+    private const val LATEST_API = "https://api.github.com/repos/$REPO/releases?per_page=30"
     private const val RELEASE_PAGE = "https://github.com/$REPO/releases/latest"
 
     private val client = OkHttpClient.Builder().build()
@@ -38,7 +38,12 @@ object UpdateChecker {
                 .build()
             val body = client.newCall(request).execute().use { it.body?.string().orEmpty() }
             if (body.isBlank()) return@withContext Result(null, null, "GitHub 返回空响应", false)
-            val root = JSONObject(body)
+            val releases = org.json.JSONArray(body)
+            val root = (0 until releases.length()).map { releases.getJSONObject(it) }.firstOrNull { r ->
+                val assets = r.optJSONArray("assets")
+                !r.optBoolean("draft") && !r.optBoolean("prerelease") &&
+                    (0 until (assets?.length() ?: 0)).any { assets!!.getJSONObject(it).optString("name").endsWith(".apk") }
+            } ?: return@withContext Result(null, null, null, false)
             val tag = root.optString("tag_name").removePrefix("v").removePrefix("V").trim()
             if (tag.isBlank()) return@withContext Result(null, null, "最新版本解析失败", false)
             // 找 apk 资产

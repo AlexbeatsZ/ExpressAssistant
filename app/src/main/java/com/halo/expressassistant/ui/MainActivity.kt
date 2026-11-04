@@ -108,6 +108,10 @@ class MainActivity : AppCompatActivity() {
             setQuickActions(false)
             showAddDialog()
         }
+        binding.actionIdentity.setOnClickListener {
+            setQuickActions(false)
+            startActivity(Intent(this, IdentityActivity::class.java))
+        }
         binding.swipeRefresh.setOnRefreshListener {
             if (!Store.hasAnyAccount(this)) {
                 binding.swipeRefresh.isRefreshing = false
@@ -122,6 +126,9 @@ class MainActivity : AppCompatActivity() {
 
         reload()
         maybeAutoSync()
+        if (intent.getBooleanExtra("identity_code", false)) {
+            startActivity(Intent(this, IdentityActivity::class.java))
+        }
         if (intent.getBooleanExtra("add", false)) {
             binding.root.post { showAddDialog() }
         }
@@ -168,6 +175,9 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (intent.getBooleanExtra("identity_code", false)) {
+            startActivity(Intent(this, IdentityActivity::class.java))
+        }
         if (intent.getBooleanExtra("sync_now", false)) {
             binding.root.post { handleSyncNow() }
         }
