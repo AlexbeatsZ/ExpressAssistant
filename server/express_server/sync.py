@@ -119,7 +119,7 @@ class SyncEngine:
                 return []
             got = results[c][0]
             if got:
-                return got
+                return got + [i for i in old.values() if i.get("source") == c]
             return [i for i in old.values() if i.get("source") == c]
 
         merged: dict[str, dict] = {}

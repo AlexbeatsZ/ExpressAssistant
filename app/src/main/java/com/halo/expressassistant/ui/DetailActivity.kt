@@ -13,6 +13,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import com.halo.expressassistant.data.ParcelState
 import coil.load
 import coil.transform.CircleCropTransformation
 import com.google.android.material.card.MaterialCardView
@@ -34,6 +36,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
 
 class DetailActivity : AppCompatActivity() {
+    private var displayedItem: ExpressItem? = null
     private var headerProgressText: TextView? = null
     private var sourceCookies: String = ""
     private var sourceAccountId: String = ""
@@ -53,7 +56,7 @@ class DetailActivity : AppCompatActivity() {
         binding.toolbar.setNavigationOnClickListener { finish() }
         val rawItem = intent.getStringExtra("item")
         val mailNo = intent.getStringExtra("mailNo")
-        val item = try {
+        val inputItem = try {
             if (rawItem != null) {
                 Store.json.decodeFromString<ExpressItem>(rawItem)
             } else if (mailNo != null) {
@@ -64,10 +67,12 @@ class DetailActivity : AppCompatActivity() {
         } catch (e: Throwable) {
             null
         }
-        if (item == null) {
+        if (inputItem == null) {
             binding.container.addView(text("数据错误"))
             return
         }
+        var item = Store.items(this).firstOrNull { it.mailNo == inputItem.mailNo } ?: inputItem
+        displayedItem = item
         binding.toolbar.inflateMenu(R.menu.detail_menu)
         val traceView = binding.toolbar.menu.findItem(R.id.action_trace).actionView
         if (traceView != null) {
@@ -102,7 +107,7 @@ class DetailActivity : AppCompatActivity() {
             }
         }
         binding.container.addView(text("加载详情中…"))
-        CoroutineScope(Dispatchers.Main).launch {
+        lifecycleScope.launch {
             try {
                 // 轨迹按数据来源路由：京东件→京东物流页；淘宝件→菜鸟轨迹；拼多多件→H5 订单详情；小米件→小米详情
                 // 多源绑定：按件归属账号取凭证（找不到回退该平台第一个启用账号）
@@ -216,6 +221,14 @@ class DetailActivity : AppCompatActivity() {
                 if (detail.data.isEmpty() && Store.kd100Fallback(this@DetailActivity) && item.source == "xiaomi") {
                     detail = KuaiDi100.fetchDetail(this@DetailActivity, item)
                 }
+                // Cached and newly fetched traces share receipt reconciliation before rendering the header.
+                val current = Store.items(this@DetailActivity).firstOrNull { it.mailNo == item.mailNo } ?: item
+                item = ParcelState.withTrace(current, detail.data)
+                if (item != current) Store.saveItems(this@DetailActivity, Store.items(this@DetailActivity).map {
+                    if (it.mailNo == item.mailNo) item else it
+                })
+                detail = detail.copy(state = item.state, isReceived = item.isCompleted())
+                displayedItem = item
                 // 详情抓到真实轨迹 → 双写回卡片外显（京东/淘宝完成单列表只给「完成」占位）
                 if ((item.source == "jd" || item.source == "taobao") && detail.data.isNotEmpty()) {
                     val last = detail.data.last()
@@ -234,7 +247,7 @@ class DetailActivity : AppCompatActivity() {
                 }
                 binding.container.removeAllViews()
                 // 从完整轨迹解析取件码（列表文本里可能没有）
-                if (item.pickupCode.isBlank()) {
+                if (!item.isCompleted() && item.pickupCode.isBlank()) {
                     val code = GoodsPresentation.pickupCodeFromParts(
                         detail.data.map { it.context } + item.latestText
                     )
@@ -540,6 +553,17 @@ class DetailActivity : AppCompatActivity() {
                 done(goods)
             }
         }
+    }
+
+    fun reloadFromStore() {
+        val shown = displayedItem ?: return
+        val current = Store.items(this).firstOrNull { it.mailNo == shown.mailNo } ?: return
+        if (current != shown && !isFinishing) recreate()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        reloadFromStore()
     }
 
     private fun onTraceClicked(item: ExpressItem) {

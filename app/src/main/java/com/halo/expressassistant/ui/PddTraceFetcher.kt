@@ -109,9 +109,8 @@ object PddTraceFetcher {
     /** 已有缓存 → 回填卡片（处理历史数据：卡片轨迹外显此前未生效） */
     fun applyCachedTraceToItem(act: Activity, item: ExpressItem) {
         val cached = Store.pddTraces(act, item.mailNo) ?: return
-        if (item.latestText.isBlank() || item.latestTime.isBlank()) {
-            applyTraceToItem(act, item, cached, done = item.state == 3)
-        }
+        val reconciled = com.halo.expressassistant.data.ParcelState.withTrace(item, cached)
+        if (reconciled != item) Store.saveItems(act, Store.items(act).map { if (it.mailNo == item.mailNo) reconciled else it })
     }
 
     private suspend fun run(act: Activity, orderId: String, pddCookies: String, silent: Boolean): TraceResult? =

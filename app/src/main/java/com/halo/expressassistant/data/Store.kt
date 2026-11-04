@@ -76,23 +76,30 @@ object Store {
         return try {
             val list = json.decodeFromString<List<ExpressItem>>(raw)
             val clean = list.filterNot { it.mailNo.startsWith("FAKETEST") }
-            if (clean.size != list.size) saveItems(context, clean)
-            clean.map { if (it.isCompleted()) it.copy(state = 3, stateNum = 107, pickupCode = "", receiptConfirmed = true) else it }
+            val reconciled = reconcileItems(prefs, clean)
+            if (reconciled != list) prefs.edit { putString(KEY_LIST, json.encodeToString(reconciled)) }
+            reconciled
         } catch (e: Throwable) {
             seed().also { saveItems(context, it) }
         }
     }
 
     fun saveItems(context: Context, items: List<ExpressItem>) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_LIST, json.encodeToString(items.map {
-                if (it.isCompleted()) it.copy(state = 3, stateNum = 107, pickupCode = "", receiptConfirmed = true) else it
-            }))
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        prefs.edit {
+            putString(KEY_LIST, json.encodeToString(reconcileItems(prefs, items)))
         }
         com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(context)
     }
 
     fun seed(): List<ExpressItem> = emptyList()
+
+    private fun reconcileItems(prefs: android.content.SharedPreferences, items: List<ExpressItem>): List<ExpressItem> {
+        val traces = if (items.any { it.source == "pdd" }) runCatching {
+            json.decodeFromString<Map<String, PddTraceCache>>(prefs.getString(KEY_PDD_TRACES, null) ?: "{}")
+        }.getOrDefault(emptyMap()) else emptyMap()
+        return items.map { ParcelState.withTrace(it, if (it.source == "pdd") traces[it.mailNo]?.points.orEmpty() else emptyList()) }
+    }
 
     fun manualTraces(context: Context, mailNo: String): List<DetailPoint>? {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("manual_traces", "{}").orEmpty()

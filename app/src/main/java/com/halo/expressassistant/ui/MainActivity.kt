@@ -113,6 +113,7 @@ class MainActivity : AppCompatActivity() {
         showTab(selectedTab); reload(); maybeAutoSync()
         if (intent.getBooleanExtra("sync_now", false)) binding.root.post { handleSyncNow() }
         if (intent.getBooleanExtra("add", false)) binding.root.post { binding.searchInput.requestFocus() }
+        binding.root.post { handleNavigationIntent(intent) }
         binding.root.post { reportFullyDrawn() }
         lifecycleScope.launch {
             val result = UpdateChecker.check(this@MainActivity)
@@ -152,6 +153,16 @@ class MainActivity : AppCompatActivity() {
         if (intent.getBooleanExtra("sync_now", false)) {
             binding.root.post { handleSyncNow() }
         }
+        binding.root.post { handleNavigationIntent(intent) }
+    }
+
+    /** Maintenance/widget navigation through the existing launcher. */
+    private fun handleNavigationIntent(intent: Intent) {
+        val query = intent.getStringExtra("query")
+        val mail = intent.getStringExtra("mailNo")
+        if (query != null || mail != null) binding.bottomNavigation.selectedItemId = com.halo.expressassistant.R.id.nav_express
+        if (query != null) binding.searchInput.setText(query)
+        if (mail != null) Store.items(this).firstOrNull { it.mailNo == mail }?.let(::openDetail)
     }
 
     /** 小组件刷新入口：四源同步完成后自动退回桌面，保持"刷新"语义 */

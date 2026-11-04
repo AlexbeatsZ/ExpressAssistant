@@ -72,6 +72,24 @@ def test_completed_receipt_evidence_survives_sync(tmp_path):
     assert st.items[0]["pickupCode"] == "" and section_of(st.items[0]) == "done"
 
 
+def test_partial_jd_page_keeps_older_completed_orders(tmp_path):
+    import asyncio
+    from express_server.store import Store
+    from express_server.sync import SyncEngine
+
+    st = Store(tmp_path)
+    st.data["items"] = [{"mailNo": n, "source": "jd", "state": 3, "stateNum": 107} for n in ("recent", "older")]
+    st.data["accounts"]["jd"] = [{"id": "j", "enabled": True, "payload": {}}]
+    eng = SyncEngine(st, None)
+
+    async def fresh(_):
+        return [{"mailNo": "recent", "source": "jd", "state": 3, "stateNum": 107}], {}, {}, ""
+
+    eng._channel = fresh
+    asyncio.run(eng.sync(("jd",)))
+    assert {i["mailNo"] for i in st.items} == {"recent", "older"}
+
+
 def test_xiaomi_crypto_roundtrip():
     s = json.dumps({"a": "中文"}, ensure_ascii=False)
     assert xiaomi._aes_dec(xiaomi._aes_enc(s)) == s

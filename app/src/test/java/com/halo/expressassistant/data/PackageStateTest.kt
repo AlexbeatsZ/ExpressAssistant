@@ -36,6 +36,7 @@ class PackageStateTest {
         assertTrue(parcel(source = "jd", name = "处理成功").isCompleted())
         assertTrue(parcel(name = "拼过2次", received = true).isCompleted())
         assertFalse(parcel(text = "已签收，菜鸟驿站代收，请及时取件").isCompleted())
+        assertFalse(parcel(name = "待签收").isCompleted())
         assertTrue(parcel(text = "您的快件已取走【菜鸟驿站】").isCompleted())
     }
 
@@ -44,5 +45,24 @@ class PackageStateTest {
         assertFalse(ManualPackages.isWaybill("纸巾"))
         assertFalse(ManualPackages.isWaybill("1234"))
         assertFalse(ManualPackages.isWaybill("123456-1234567890"))
+    }
+
+    @Test fun cachedSignedTraceCorrectsFilledMarketingHeader() {
+        val old = parcel(name = "拼过2次", text = "菜鸟驿站代收，请取件").copy(
+            state = 5, stateNum = 105, latestTime = "2026-07-25 08:00", pickupCode = "old-code")
+        val signed = DetailPoint("已签收，签收人凭取货码签收。", "2026-07-25 21:00")
+        val depot = DetailPoint("菜鸟驿站代收，请及时取件", "2026-07-25 08:00")
+        val fixed = ParcelState.withTrace(old, listOf(signed, depot))
+        assertEquals("done", sectionKeyOf(fixed)); assertEquals(100, displayProgress(fixed))
+        assertEquals("已签收", fixed.stateLabel()); assertEquals("", fixed.pickupCode)
+        assertTrue(fixed.receiptConfirmed); assertEquals(signed.context, fixed.latestText)
+    }
+
+    @Test fun depotReceiptDoesNotCompleteParcelAndCannotUndoPriorReceipt() {
+        val pending = parcel(name = "待收货").copy(state = 0, stateNum = 104, pickupCode = "1-2-3")
+        val trace = listOf(DetailPoint("已签收，菜鸟驿站代收，请及时取件", "2026-07-25 08:00"))
+        val fixed = ParcelState.withTrace(pending, trace)
+        assertFalse(fixed.isCompleted()); assertEquals("1-2-3", fixed.pickupCode)
+        assertTrue(ParcelState.withTrace(pending.copy(receiptConfirmed = true), trace).isCompleted())
     }
 }

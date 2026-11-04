@@ -129,6 +129,7 @@ object PhoneControl {
             scope.launch {
                 when (val activity = App.topActivity) {
                     is com.halo.expressassistant.ui.MainActivity -> activity.reload()
+                    is com.halo.expressassistant.ui.DetailActivity -> activity.reloadFromStore()
                 }
                 com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(ctx)
             }

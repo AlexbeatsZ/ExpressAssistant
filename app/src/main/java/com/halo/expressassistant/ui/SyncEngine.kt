@@ -103,8 +103,8 @@ object SyncEngine {
         // 防误清：通道「成功但 0 件」或抓取失败时保留该通道旧数据（WebView 抓取偶发空页会清空列表）；
         // 新账号首次同步（无旧数据）才允许写入空结果。
         fun preserveOld(channel: String, fresh: List<ExpressItem>?): List<ExpressItem>? {
-            if (fresh != null && fresh.isNotEmpty()) return fresh
             val old = oldItems.values.filter { it.source == channel }
+            if (fresh != null && fresh.isNotEmpty()) return (fresh + old).distinctBy { it.mailNo }
             return if (old.isNotEmpty()) old else fresh
         }
         val oldPddCount = oldItems.values.count { it.source == "pdd" }
@@ -133,7 +133,7 @@ object SyncEngine {
             // 拼多多状态自愈：旧存件状态名已是「完成语义」（已评价/交易成功…）但 state 未标完成
             // → 纠正为完成，防远古单滞留在途（列表抓取深度波动后可能不再回吐该单来刷新状态）
             val pddDoneHeal = item.source == "pdd" && item.state != 3 &&
-                listOf("已评价", "交易成功", "待评价", "已完成", "已签收", "签收").any { item.stateName.contains(it) }
+                com.halo.expressassistant.data.PddOrderStatus.completedLabel(item.stateName)
             item.copy(
                 state = if (pddDoneHeal) 3 else item.state,
                 stateNum = if (pddDoneHeal) 107 else item.stateNum,
