@@ -14,7 +14,17 @@
         <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center_vertical">
             <TextView android:id="@+id/toolbar_title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="快递" android:textAppearance="?attr/textAppearanceTitleLarge" android:textColor="?attr/colorOnSurface" />
             <ImageButton android:id="@+id/btn_calendar" android:layout_width="44dp" android:layout_height="48dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="日历" android:src="@drawable/ic_calendar" app:tint="?attr/colorOnSurface" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/btn_done" style="?attr/borderlessButtonStyle" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="64dp" android:text="已完成" />
+            <ImageButton
+                android:id="@+id/btn_done"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:padding="12dp"
+                android:scaleType="center"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="已完成"
+                android:tooltipText="已完成"
+                android:src="@drawable/ic_checklist"
+                app:tint="?attr/colorOnSurface" />
             <ImageButton android:id="@+id/btn_settings" android:layout_width="44dp" android:layout_height="48dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="设置" android:src="@drawable/ic_settings" app:tint="?attr/colorOnSurface" />
         </LinearLayout>
     </com.google.android.material.appbar.MaterialToolbar>
