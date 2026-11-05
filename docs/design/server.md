@@ -59,7 +59,7 @@
 
 ## 菜鸟「我的包裹」取件码（已接入，0.1.2）
 
-- 依据：菜鸟 Android 8.11.1023 静态分析（Codex 会话，报告在 `~/Documents/Codex/2026-11-04/x/outputs/cainiao-analysis.md`）+ 公开项目 pickup-assistant 的接口名。
+- 依据：菜鸟 Android 8.11.1023 静态分析（本机报告 `outputs/cainiao-analysis.md`，不随仓库发布）+ 公开项目 pickup-assistant 的接口名。
 - App 调的是带 `.cn` 的原生接口（需原生 SESSION/ECODE/WUA）；淘宝 H5 网关和菜鸟 H5 页面里调 `.cn` 都返回 `FAIL_SYS_SESSION_EXPIRED` / `FAIL_SYS_UNAUTHORIZED_ENTRANCE`。不带 `.cn` 的同名接口可用淘宝 H5 会话调用，服务器只用这一类。
 - `channels/cainiao.py`：`queryPdsPackageDataList`（失败回退 `pcs.queryPackageDataList`），pageSize 50 按 `totalPage` 翻页；随淘宝账号一起同步，失败只记状态、保留旧菜鸟数据，不影响淘宝订单。
 - 取件码规则（与 App 一致）：`packageStation.authCode` 优先；仅当它是 `needSms` 时才用 `feature.stationOrderPickUpCode`（feature 先解析 JSON，或用 `featureObj`）；终值是占位或为空则不展示。`logisticsStatus` 为 SIGN/CANCEL/REJECT/RETURN/LOST 时不展示码。
