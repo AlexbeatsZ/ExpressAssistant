@@ -86,11 +86,12 @@ object PhoneControl {
                     path == "/api/pickup" && session.method == Method.GET -> json(packages(true))
                     path == "/api/sync" && session.method == Method.GET -> json(syncState)
                     path == "/api/sync" && session.method == Method.POST -> {
-                        if (!busy.compareAndSet(false, true)) return error(Response.Status.CONFLICT, "sync running")
+                        val includeHistory = JSONObject(body(session).ifBlank { "{}" }).optBoolean("includeHistory", false)
+                        if (SyncEngine.isRunning || !busy.compareAndSet(false, true)) return error(Response.Status.CONFLICT, "sync running")
                         syncState = JSONObject().put("running", true).put("startedAt", System.currentTimeMillis())
                         scope.launch {
                             try {
-                                val report = SyncEngine.sync(App.topActivity ?: ctx)
+                                val report = SyncEngine.sync(App.topActivity ?: ctx, includeHistory = includeHistory)
                                 syncState = JSONObject().put("running", false).put("ok", true)
                                     .put("finishedAt", System.currentTimeMillis()).put("total", report.total)
                                     .put("statuses", JSONArray().apply {
@@ -159,7 +160,9 @@ object PhoneControl {
                     val done = item.isCompleted() || item.state == 4 || item.stateNum in 108..111
                     val code = if (done) "" else item.pickupCode
                     if (!pickupOnly || !done && (code.isNotBlank() || listOf("待取件", "驿站", "快递柜").any { item.latestText.contains(it) })) {
-                        put(JSONObject(Store.json.encodeToString(item)).put("pickupCode", code).put("goodsName", goods[item.mailNo]?.name.orEmpty()))
+                        put(JSONObject(Store.json.encodeToString(item)).put("pickupCode", code)
+                            .put("orderOnly", item.orderOnly).put("orderId", if (item.source in setOf("taobao", "pdd", "jd")) item.queryChannel else "")
+                            .put("goodsName", goods[item.mailNo]?.name.orEmpty()))
                     }
                 }
             }

@@ -18,8 +18,18 @@ import org.json.JSONObject
  * 因此仿照京东的做法：让 WebView 亲自加载页面并替我们完成签名，Kotlin 只读响应。
  */
 object PddCapture {
+    const val INITIAL_ORDERS = "pdd:initial-orders"
 
     private const val TAG = "PddCapture"
+
+    fun readInitialOrders(w: WebView, onDone: (String?) -> Unit) {
+        w.evaluateJavascript("""
+            (function(){var s=window.rawData && window.rawData.ordersStore;
+              return s && s.initOdersList ? JSON.stringify({orders:s.initOdersList}) : null;})()
+        """.trimIndent()) { value ->
+            onDone(runCatching { org.json.JSONTokener(value).nextValue() as? String }.getOrNull())
+        }
+    }
 
     /** 拼多多 H5 相关域（cookie 注入与清理） */
     val COOKIE_HOSTS = listOf(
@@ -215,6 +225,20 @@ object PddCapture {
         w.evaluateJavascript(js, null)
     }
 
+    fun tryTapOrderTab(w: WebView, title: String) {
+        w.evaluateJavascript("""
+            (function(){
+              var target = ${JSONObject.quote(title)}, best = null;
+              document.querySelectorAll('div,span,button,a,li').forEach(function(e){
+                var r=e.getBoundingClientRect();
+                if ((e.innerText||'').trim()===target && r.width>0 && r.height>0 &&
+                    (!best || r.height<best.getBoundingClientRect().height)) best=e;
+              });
+              if(best){best.scrollIntoView({block:'center'});best.click();return true;} return false;
+            })()
+        """.trimIndent(), null)
+    }
+
     /** 尝试点击「全部」tab / 「查看全部」入口（订单页默认可能停在一个空 tab） */
     fun tryTapAllOrders(w: WebView) {
         val js = """
@@ -260,6 +284,7 @@ object PddCapture {
 
     /** 捕获是否可能是拼多多业务数据（订单/物流类） */
     fun looksRelevant(url: String, body: String): Boolean {
+        if (url == INITIAL_ORDERS) return true
         val u = url.lowercase()
         val b = body.lowercase()
         return u.contains("proxy/api") && (

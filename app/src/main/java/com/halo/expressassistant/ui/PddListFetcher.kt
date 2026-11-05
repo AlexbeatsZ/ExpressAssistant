@@ -145,10 +145,11 @@ object PddListFetcher {
         act: Context,
         account: com.halo.expressassistant.data.BoundAccount?,
         onBatch: (List<ExpressItem>, Map<String, JdGoods>) -> Unit,
+        includeHistory: Boolean = true,
         onDone: (List<ExpressItem>?, Map<String, JdGoods>, String?) -> Unit
     ) {
         handler.post {
-            start(act, account, onDone, onBatch)
+            start(act, account, onDone, onBatch, includeHistory)
         }
     }
 
@@ -157,7 +158,8 @@ object PddListFetcher {
         act: Context,
         account: com.halo.expressassistant.data.BoundAccount?,
         onDone: (List<ExpressItem>?, Map<String, JdGoods>, String?) -> Unit,
-        onBatch: ((List<ExpressItem>, Map<String, JdGoods>) -> Unit)? = null
+        onBatch: ((List<ExpressItem>, Map<String, JdGoods>) -> Unit)? = null,
+        includeHistory: Boolean = true
     ) {
         val captures = ArrayList<Pair<String, String>>()
         var finished = false
@@ -205,7 +207,11 @@ object PddListFetcher {
                 }
                 if (url.contains("order") && !url.contains("login.html") && !url.contains("proxy")) {
                     handler.postDelayed({
-                        collect(w, captures, account, onBatch, ::finish)
+                        if (!finished) PddCapture.readInitialOrders(w) { body ->
+                            if (body != null && captures.none { it.first == PddCapture.INITIAL_ORDERS })
+                                captures.add(PddCapture.INITIAL_ORDERS to body)
+                            if (!finished) collect(w, captures, account, onBatch, includeHistory, ::finish)
+                        }
                     }, 4000)
                 }
             }
@@ -234,10 +240,10 @@ object PddListFetcher {
                 Log.w(TAG, "timeout, finalize with ${captures.size} captures")
                 finish(null, "拼多多列表超时（已用部分数据）")
             }
-        }, 75_000)
+        }, if (includeHistory) 75_000 else 15_000)
     }
 
-    private fun collect(w: WebView, captures: ArrayList<Pair<String, String>>, account: com.halo.expressassistant.data.BoundAccount?, onBatch: ((List<ExpressItem>, Map<String, JdGoods>) -> Unit)?, finish: (List<ExpressItem>?, String?) -> Unit) {
+    private fun collect(w: WebView, captures: ArrayList<Pair<String, String>>, account: com.halo.expressassistant.data.BoundAccount?, onBatch: ((List<ExpressItem>, Map<String, JdGoods>) -> Unit)?, includeHistory: Boolean, finish: (List<ExpressItem>?, String?) -> Unit) {
         if (scrolling) return
         scrolling = true
         var rounds = 0
@@ -262,7 +268,7 @@ object PddListFetcher {
                         }
                     }
                     val (orders, allGoods) = convert(captures, account)
-                    if (rounds >= 3 && orders.isEmpty() && captures.any { (url, body) ->
+                    if (rounds >= 5 && orders.isEmpty() && captures.any { (url, body) ->
                             url.contains("/aristotle/order_list") && PddCapture.authenticatedOrderCount(body) == 0
                         }) {
                         finish(emptyList(), null)
@@ -283,20 +289,27 @@ object PddListFetcher {
                             Log.i(TAG, "page text length=${v.length}")
                         }
                     }
-                    // 触摸时序滚动（PDD 虚拟列表以 touch 事件触发增量加载，JS scrollTop 无法触发完整 76 单）
-                    if (rounds == 2 || rounds == 5) {
-                        PddCapture.tryTapAllOrders(w)
+                    if (!includeHistory && (orders.isNotEmpty() || rounds >= 3)) {
+                        val authenticated = captures.any { (url, body) -> url == PddCapture.INITIAL_ORDERS ||
+                            url.contains("/aristotle/order_list") && (PddCapture.authenticatedOrderCount(body) ?: -1) >= 0 }
+                        finish(orders, if (orders.isEmpty() && !authenticated) "拼多多未取得订单响应，已保留旧数据" else null)
+                        return@readCaptures
                     }
-                    PddCapture.tryTapMore(w)
-                    swipeUp(w)
+                    // 触摸时序滚动（PDD 虚拟列表以 touch 事件触发增量加载，JS scrollTop 无法触发完整 76 单）
+                    when (rounds) {
+                        1 -> PddCapture.tryTapOrderTab(w, "待发货")
+                        2 -> PddCapture.tryTapOrderTab(w, "待收货")
+                        3 -> PddCapture.tryTapOrderTab(w, "全部")
+                        else -> { PddCapture.tryTapMore(w); swipeUp(w) }
+                    }
                     if (orders.size == lastCount) stableStreak++ else {
                         stableStreak = 0
                         lastCount = orders.size
                     }
-                    if ((orders.isNotEmpty() && stableStreak >= 3 && rounds >= 6) || rounds > 18) {
+                    if ((orders.isNotEmpty() && stableStreak >= 3 && rounds >= 9) || rounds > 18) {
                         finish(orders, null)
                     } else {
-                        handler.postDelayed(this, 3000)
+                        handler.postDelayed(this, if (rounds <= 3) 4000 else 3000)
                     }
                 }
             }
@@ -469,14 +482,14 @@ object PddListFetcher {
             queryChannel = orderId.ifBlank { mailNo },
             source = "pdd",
             accountId = accountId,
-            accountLabel = accountLabel
+            accountLabel = accountLabel,
+            orderOnly = state == 1 && PddCapture.firstString(obj, TRACK_KEYS).isBlank()
         )
         val key = orderId.ifBlank { mailNo }
         byOrder[key] = item
         if (goods.name.isNotBlank()) {
             goodsMap[mailNo] = goods
         }
-        Log.i(TAG, "parsed order key=$key mailNo=$mailNo state=$state goods=${goods.name.take(20)}")
     }
 
     private fun extractGoods(obj: JSONObject): JdGoods {

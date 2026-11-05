@@ -13,8 +13,8 @@ import java.util.concurrent.atomic.AtomicLong
  * 拼多多物流轨迹 · 后台静默补抓
  *
  * 在每次同步完成 / App 回到前台后自动运行（隐藏 WebView，无界面打扰）：
- * - 优先抓「派送中 > 运输中（待收货） > 已完成」的订单；单轮最多 12 单、每单间隔 3s（防风控/省电）
- * - 活跃单缓存 1h 刷新、已完成单 24h 刷新；轨迹**始终保存**（pdd_traces），点开详情秒开
+ * - 优先抓「派送中 > 运输中（待收货）」的订单；单轮最多 12 单、每单间隔 3s（防风控/省电）
+ * - 只自动补抓活跃单；已完成单在详情页按需加载；轨迹**始终保存**（pdd_traces），点开详情秒开
  */
 object PddTraceBackfill {
     private val TAG = "PddTraceBackfill"
@@ -26,6 +26,7 @@ object PddTraceBackfill {
 
     /** 静默补抓（force=true 跳过 10 分钟限流：同步完成后调用，立刻回填缓存到卡片并补抓过期单） */
     fun backfill(act: Activity, scope: CoroutineScope, force: Boolean = false) {
+        if (SyncEngine.isRunning) return
         val now = System.currentTimeMillis()
         if (!force && now - lastRunAt.get() < MIN_INTERVAL_MS) return
         if (!running.compareAndSet(false, true)) return
@@ -34,7 +35,7 @@ object PddTraceBackfill {
             try {
                 val accounts = Store.accounts(act, Store.CH_PDD).filter { it.enabled }
                 if (accounts.isEmpty()) return@launch
-                val items = Store.items(act).filter { it.source == "pdd" }
+                val items = Store.items(act).filter { it.source == "pdd" && !it.orderOnly && !it.isCompleted() }
                 if (items.isEmpty()) return@launch
                 val refreshList = {
                     try {
@@ -64,6 +65,7 @@ object PddTraceBackfill {
                 var ok = 0
                 var fail = 0
                 for (item in need) {
+                    if (SyncEngine.isRunning) break
                     val account = Store.accountForItem(act, item)
                     if (account == null) {
                         fail++

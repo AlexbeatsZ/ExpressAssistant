@@ -65,8 +65,11 @@ data class ExpressItem(
     /** 取件码（从轨迹文本解析，聚合显示） */
     val pickupCode: String = "",
     val station: String = "",
-    val receiptConfirmed: Boolean = false
+    val receiptConfirmed: Boolean = false,
+    /** 订单已付款但尚未生成运单；mailNo 此时只作本地记录键。 */
+    val orderOnly: Boolean = false
 ) {
+    fun displayReference(): String = if (orderOnly) "订单号：$queryChannel" else mailNo
     fun isCompleted(): Boolean {
         if (state == 3 || stateNum in 106..107) return true
         if (receiptConfirmed) return true
@@ -125,7 +128,7 @@ fun progressFor(item: ExpressItem): Int = when (item.stateNum) {
 }
 
 /** 从已知物流状态映射展示进度；未知状态不显示数值。 */
-fun displayProgress(item: ExpressItem): Int = if (item.state < 0 && item.stateNum == 0) -1 else progressFor(item)
+fun displayProgress(item: ExpressItem): Int = if (item.orderOnly || item.state < 0 && item.stateNum == 0) -1 else progressFor(item)
 
 
 @Serializable

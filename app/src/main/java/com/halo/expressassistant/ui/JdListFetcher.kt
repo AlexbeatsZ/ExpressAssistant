@@ -89,21 +89,23 @@ object JdListFetcher {
     fun fetch(
         act: Context,
         onDone: (List<ExpressItem>?, Map<String, JdGoods>, String?) -> Unit
-    ) = fetchWith(act, Store.firstEnabledAccount(act, Store.CH_JD), onDone)
+    ) = fetchWith(act, Store.firstEnabledAccount(act, Store.CH_JD), onDone = onDone)
 
     /** 多源绑定：按指定京东账号凭证抓列表 */
     fun fetchWith(
         act: Context,
         account: com.halo.expressassistant.data.BoundAccount?,
+        includeHistory: Boolean = true,
         onDone: (List<ExpressItem>?, Map<String, JdGoods>, String?) -> Unit
     ) {
-        handler.post { start(act, account, onDone) }
+        handler.post { start(act, account, includeHistory, onDone) }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun start(
         act: Context,
         account: com.halo.expressassistant.data.BoundAccount?,
+        includeHistory: Boolean,
         onDone: (List<ExpressItem>?, Map<String, JdGoods>, String?) -> Unit
     ) {
         val captures = ArrayList<String>()
@@ -197,6 +199,10 @@ object JdListFetcher {
         w.webViewClient = object : WebViewClient() {            override fun onPageFinished(view: WebView, url: String) {
                 Log.i(TAG, "page: $url")
                 if (url.contains("plogin") || url.contains("nopasswordcmcc")) {
+                    if (!includeHistory) {
+                        finish(null, "京东需要重新登录验证，已保留旧数据")
+                        return
+                    }
                     // 京东安全验证页：保持隐藏 WebView 静默等待（不弹窗打扰）；
                     // 页面内登录/一键登录完成后会继续跳回 orderlist_jdm，验证后回存新 Cookie 防再次脱线
                     Log.i(TAG, "login challenge (silent) -> wait page continue")
@@ -230,7 +236,7 @@ object JdListFetcher {
                     val cookies = collectJdCookies()
                     if (cookies.isNotBlank()) saveCookies(cookies)
                     handler.postDelayed({
-                        scrollAndCollect(w, captures, account, ::finish)
+                        if (!finished) scrollAndCollect(w, captures, account, includeHistory, ::finish)
                     }, 4000)
                 }
             }
@@ -256,13 +262,14 @@ object JdListFetcher {
                 Log.w(TAG, "timeout, finalize with ${captures.size} captures")
                 finish(null, "京东列表超时（已用部分数据）")
             }
-        }, 60000)
+        }, if (includeHistory) 60000 else 15000)
     }
 
     private fun scrollAndCollect(
         w: WebView,
         captures: ArrayList<String>,
         account: com.halo.expressassistant.data.BoundAccount?,
+        includeHistory: Boolean,
         finish: (List<ExpressItem>?, String?) -> Unit
     ) {
         if (scrollStarted) return
@@ -294,7 +301,7 @@ object JdListFetcher {
                 val (orders, _) = convert(captures, account)
                 val total = totalNum(captures)
                 Log.i(TAG, "round=$rounds orders=${orders.size} total=$total captures=${captures.size}")
-                if ((total > 0 && orders.size >= total) || rounds > 14) {
+                if ((!includeHistory && (orders.isNotEmpty() || rounds >= 3)) || (total > 0 && orders.size >= total) || rounds > 14) {
                     val error = if (orders.isEmpty() && captures.isEmpty()) {
                         if (w.url.orEmpty().contains("plogin")) "京东需要在手机重新登录验证，已保留旧数据"
                         else "京东未捕获到列表响应，已保留旧数据"

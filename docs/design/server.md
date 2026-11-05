@@ -82,3 +82,7 @@
 - 网页移除 AI 接口说明入口；服务器继续提供 REST/MCP，软件内不接模型。
 - PDD 用订单 shipping_status=2 / receive_time>0 优先判收货，识别已提货；未知状态不默认 105。JD 等待收货归运输中，处理成功归完成。receiptConfirmed 跨同步保留完成证据。具体规则见 package-state.md。
 - 本轮拼多多重新同步 153 条，跨源历史 183 条全部已完成；无真实待取件。京东本轮列表空，保留历史并报渠道错误，不能沿用以前“京东仍可用”的结论。
+
+## 2026-11-05 待发货订单（0.1.5）
+
+与手机 v0.9.2 一致：淘宝已付款无运单仍保存 orderOnly 订单；拼多多读取 SSR initOdersList 的首屏完整数据后再抓分类和分页。正式运单替换同账号/平台订单的占位记录，已签收历史保留。REST 返回 orderOnly、orderId、trackingNo，mailNo 仍是查询键。详见 package-state.md 与 server/AI_API.md。

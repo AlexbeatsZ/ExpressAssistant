@@ -3,6 +3,8 @@ package com.halo.expressassistant.api
 import android.content.Context
 import android.util.Log
 import com.halo.expressassistant.data.Store
+import com.halo.expressassistant.data.BoundAccount
+import com.halo.expressassistant.data.ExpressItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -31,7 +33,19 @@ object TbOrders {
         val statusText: String,
         val goodsName: String = "",
         val goodsPic: String = ""
-    )
+    ) {
+        fun isPaidUnshipped(): Boolean = tradeStatus == "WAIT_SELLER_SEND_GOODS" ||
+            tradeStatus.isBlank() && statusText in setOf("买家已付款", "待发货", "等待卖家发货")
+
+        fun pendingItem(account: BoundAccount): ExpressItem? {
+            if (!isPaidUnshipped() || orderId.isBlank()) return null
+            val key = "taobao-order:${account.id}:$orderId"
+            return ExpressItem(id = key, mailNo = key, companyCode = "", companyName = "淘宝订单",
+                state = 1, stateNum = 101, stateName = "待发货", latestText = statusText.ifBlank { "买家已付款" },
+                originalName = goodsName, queryChannel = orderId, source = "taobao",
+                accountId = account.id, accountLabel = account.label, orderOnly = true)
+        }
+    }
 
     data class TbParcel(
         val mailNo: String,
@@ -52,29 +66,24 @@ object TbOrders {
     suspend fun fetchBoughtListWith(cookies: String, page: Int = 1): List<TbOrder> =
         withContext(Dispatchers.IO) {
             if (cookies.isBlank()) return@withContext emptyList()
-            try {
-                val dataObj = JSONObject()
-                    .put("tabCode", "all")
-                    .put("page", page)
-                    .put("OrderType", "OrderList")
-                    .put("templateConfigVersion", "0")
-                    .put("appName", "tborder")
-                    .put("appVersion", "3.0")
-                    .put("condition", "{\"version\":\"1.0.0\",\"appChannel\":\"\"}")
-                    .put("ttid", "201200@taobao_h5_9.18.0")
-                    .put("requestIdentity", "#t#ip#h5")
-                val body = mtopCall(
-                    cookies,
-                    "mtop.taobao.order.queryboughtlistv2", "1.0",
-                    dataObj.toString(),
-                    host = "h5api.m.taobao.com"
-                )
-                Log.i(TAG, "boughtlist len=${body.length} head=${body.take(150)}")
-                parseBoughtList(body)
-            } catch (e: Throwable) {
-                Log.w(TAG, "fetchBoughtList fail: $e")
-                emptyList()
-            }
+            val dataObj = JSONObject()
+                .put("tabCode", "all")
+                .put("page", page)
+                .put("OrderType", "OrderList")
+                .put("templateConfigVersion", "0")
+                .put("appName", "tborder")
+                .put("appVersion", "3.0")
+                .put("condition", "{\"version\":\"1.0.0\",\"appChannel\":\"\"}")
+                .put("ttid", "201200@taobao_h5_9.18.0")
+                .put("requestIdentity", "#t#ip#h5")
+            val body = mtopCall(
+                cookies,
+                "mtop.taobao.order.queryboughtlistv2", "1.0",
+                dataObj.toString(),
+                host = "h5api.m.taobao.com"
+            )
+            Log.i(TAG, "boughtlist len=${body.length}")
+            parseBoughtList(body)
         }
 
     /** 订单的 SSR 物流详情 -> 包裹信息（含全轨迹，供详情页时间线）——旧接口 */
@@ -131,10 +140,15 @@ object TbOrders {
 
     /* ───────────── 解析 ───────────── */
 
-    private fun parseBoughtList(body: String): List<TbOrder> {
-        val json = body.substringAfter("(", "").substringBeforeLast(")")
-        if (json.isBlank()) return emptyList()
+    internal fun parseBoughtList(body: String): List<TbOrder> {
+        val json = if (body.trimStart().startsWith("{")) body else body.substringAfter("(", "").substringBeforeLast(")")
+        check(json.isNotBlank()) { "淘宝订单响应无法解析" }
         val root = JSONObject(json)
+        val ret = root.optJSONArray("ret")
+        if (ret != null && (0 until ret.length()).none { ret.optString(it).startsWith("SUCCESS") }) {
+            error(if (ret.toString().contains("SESSION_EXPIRED") || ret.toString().contains("FAIL_SYS_TOKEN"))
+                "淘宝登录已失效，请在设置中重新登录" else "淘宝订单读取失败，请在设置中检查登录状态")
+        }
         val data = root.optJSONObject("data") ?: return emptyList()
         // 新格式：data.result 是字符串，内层 JSON 有 mainOrders；旧格式：data.data.Main_*
         val inner: JSONObject? = runCatching {
@@ -277,8 +291,10 @@ object TbOrders {
                 val setCookies = resp.headers("Set-Cookie").joinToString("\n")
                 val newTk = Regex("_m_h5_tk=([^;]+)").find(setCookies)?.groupValues?.get(1)
                 val newEnc = Regex("_m_h5_tk_enc=([^;]+)").find(setCookies)?.groupValues?.get(1)
-                if (!newTk.isNullOrBlank()) ck = ck.replace(Regex("_m_h5_tk=[^;]*"), "_m_h5_tk=$newTk")
-                if (!newEnc.isNullOrBlank()) ck = ck.replace(Regex("_m_h5_tk_enc=[^;]*"), "_m_h5_tk_enc=$newEnc")
+                for ((name, value) in listOf("_m_h5_tk" to newTk, "_m_h5_tk_enc" to newEnc)) {
+                    if (!value.isNullOrBlank()) ck = if (Regex("(?:^|;\\s*)$name=").containsMatchIn(ck))
+                        ck.replace(Regex("$name=[^;]*"), "$name=$value") else "$ck; $name=$value"
+                }
             }
         }
         val token = Regex("_m_h5_tk=([^;]+)").find(ck)?.groupValues?.get(1)?.substringBefore("_")

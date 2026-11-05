@@ -10,6 +10,7 @@ import com.halo.expressassistant.api.XiaomiSync
 import com.halo.expressassistant.data.ExpressItem
 import com.halo.expressassistant.data.JdGoods
 import com.halo.expressassistant.data.Store
+import com.halo.expressassistant.data.OrderRecords
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -26,6 +27,7 @@ import kotlin.coroutines.resume
  * 小米同件覆盖京东/淘宝/拼多多；未登录渠道的旧数据在本次同步中移除。
  */
 object SyncEngine {
+    val isRunning: Boolean get() = mutex.isLocked
 
     private const val TAG = "SyncEngine"
 
@@ -38,17 +40,19 @@ object SyncEngine {
     suspend fun sync(
         act: Context,
         skip: Set<String> = emptySet(),
-        onPddProgress: ((List<ExpressItem>, Map<String, JdGoods>) -> Unit)? = null,
+        includeHistory: Boolean = false,
+        onProgress: ((List<ExpressItem>, Map<String, JdGoods>) -> Unit)? = null,
         onFastChannelsDone: (() -> Unit)? = null
     ): Report =
         mutex.withLock {
-            syncInternal(act, skip, onPddProgress, onFastChannelsDone)
+            syncInternal(act, skip, includeHistory, onProgress, onFastChannelsDone)
         }
 
     private suspend fun syncInternal(
         act: Context,
         skip: Set<String>,
-        onPddProgress: ((List<ExpressItem>, Map<String, JdGoods>) -> Unit)? = null,
+        includeHistory: Boolean,
+        onProgress: ((List<ExpressItem>, Map<String, JdGoods>) -> Unit)? = null,
         onFastChannelsDone: (() -> Unit)? = null
     ): Report = withContext(Dispatchers.IO) {
         val xiaomiOn = Store.accounts(act, Store.CH_XIAOMI).any { it.enabled } && "xiaomi" !in skip
@@ -77,10 +81,14 @@ object SyncEngine {
         }
 
         // ── 京东（WebView）/ 淘宝（HTTP）/ 拼多多（WebView）三路并行；各自内部逐账号 ──
-        val jdDeferred = if (jdOn) async { fetchJdAll(act) } else null
-        val tbDeferred = if (tbOn) async { fetchTbAll(act) } else null
+        val jdDeferred = if (jdOn) async { fetchJdAll(act, includeHistory) } else null
+        val tbDeferred = if (tbOn) async {
+            val result = fetchTbAll(act, includeHistory)
+            withContext(Dispatchers.Main) { onProgress?.invoke(result.first.orEmpty(), emptyMap()) }
+            result
+        } else null
         val cnDeferred = if (tbOn) async { fetchCainiaoAll(act) } else null
-        val pddDeferred = if (pddOn) async { fetchPddAll(act, onPddProgress) } else null
+        val pddDeferred = if (pddOn) async { fetchPddAll(act, includeHistory, onProgress) } else null
 
         val jdResult = jdDeferred?.await()
         val tbResult = tbDeferred?.await()
@@ -104,7 +112,8 @@ object SyncEngine {
         // 新账号首次同步（无旧数据）才允许写入空结果。
         fun preserveOld(channel: String, fresh: List<ExpressItem>?): List<ExpressItem>? {
             val old = oldItems.values.filter { it.source == channel }
-            if (fresh != null && fresh.isNotEmpty()) return (fresh + old).distinctBy { it.mailNo }
+            if (channel == "taobao" && tbResult != null) return OrderRecords.mergeHistory(fresh.orEmpty(), old, tbResult.third)
+            if (fresh != null && fresh.isNotEmpty()) return OrderRecords.mergeHistory(fresh, old)
             return if (old.isNotEmpty()) old else fresh
         }
         val oldPddCount = oldItems.values.count { it.source == "pdd" }
@@ -117,13 +126,14 @@ object SyncEngine {
         preserveOld("jd", jdResult?.first)?.forEach { if (!merged.containsKey(it.mailNo)) merged[it.mailNo] = it }
         preserveOld("taobao", tbResult?.first)?.forEach { if (!merged.containsKey(it.mailNo)) merged[it.mailNo] = it }
         // 拼多多「增量」合并：本次抓到的（新）与历史上抓过的（旧）取并集——总件数只增不减、实时上涨
-        val pddUnion = (preserveOld("pdd", pddResult?.first).orEmpty() + oldItems.values.filter { it.source == "pdd" })
-            .distinctBy { it.mailNo }
+        val pddUnion = preserveOld("pdd", pddResult?.first).orEmpty()
         pddUnion.forEach { if (!merged.containsKey(it.mailNo)) merged[it.mailNo] = it }
         oldItems.values.filter { it.source in setOf("cainiao", "manual") }.forEach { merged.putIfAbsent(it.mailNo, it) }
 
         val finalList = merged.values.map { item ->
-            val old = oldItems[item.mailNo] ?: return@map item
+            val old = oldItems[item.mailNo] ?: oldItems.values.firstOrNull {
+                it.orderOnly && item.queryChannel.isNotBlank() && OrderRecords.key(it) == OrderRecords.key(item)
+            } ?: return@map item
             // 拼多多：列表最新文案只是状态提示（交易成功/待评价…），
             // 已被物流页回写的真实轨迹（latestText/latestTime）要在同步合并时保留，防止覆盖丢失
             val pddPromptOnly = item.source == "pdd" &&
@@ -189,14 +199,14 @@ object SyncEngine {
 
 
     /** 京东：逐账号抓取（一个失败不影响其它账号） */
-    private suspend fun fetchJdAll(act: Context): Triple<List<ExpressItem>?, Map<String, JdGoods>, String?> {
+    private suspend fun fetchJdAll(act: Context, includeHistory: Boolean): Triple<List<ExpressItem>?, Map<String, JdGoods>, String?> {
         val accounts = Store.accounts(act, Store.CH_JD).filter { it.enabled }
         val allItems = ArrayList<ExpressItem>()
         val goodsAcc = HashMap<String, JdGoods>()
         var err: String? = null
         for (account in accounts) {
             try {
-                val (items, goodsMap, e) = fetchJd(act, account)
+                val (items, goodsMap, e) = fetchJd(act, account, includeHistory)
                 if (items == null) err = e ?: err
                 else {
                     allItems.addAll(items)
@@ -210,9 +220,9 @@ object SyncEngine {
         return Triple(if (allItems.isEmpty() && err != null) null else allItems, goodsAcc, err)
     }
 
-    private suspend fun fetchJd(act: Context, account: com.halo.expressassistant.data.BoundAccount?): Triple<List<ExpressItem>?, Map<String, JdGoods>, String?> =
+    private suspend fun fetchJd(act: Context, account: com.halo.expressassistant.data.BoundAccount?, includeHistory: Boolean): Triple<List<ExpressItem>?, Map<String, JdGoods>, String?> =
         suspendCancellableCoroutine { cont ->
-            JdListFetcher.fetchWith(act, account) { items, goods, err ->
+            JdListFetcher.fetchWith(act, account, includeHistory) { items, goods, err ->
                 if (cont.isActive) cont.resume(Triple(items, goods, err))
             }
         }
@@ -230,24 +240,27 @@ object SyncEngine {
     }
 
     /** 淘宝订单与菜鸟驿站列表分开调用，单个接口失败不阻断另一接口。 */
-    private suspend fun fetchTbAll(act: Context): Pair<List<ExpressItem>?, String?> {
+    private suspend fun fetchTbAll(act: Context, includeHistory: Boolean): Triple<List<ExpressItem>?, String?, Set<String>> {
         val accounts = Store.accounts(act, Store.CH_TAOBAO).filter { it.enabled }
         val allItems = ArrayList<ExpressItem>()
         var err: String? = null
+        val observed = HashSet<String>()
         try {
             for (account in accounts) {
                 val cookies = Store.cookieOf(account.payload)
                 if (cookies.isBlank()) continue
                 // 1) 订单列表（最多翻 3 页，按订单号去重）
                 val orders = LinkedHashMap<String, TbOrders.TbOrder>()
-                for (page in 1..3) {
+                for (page in 1..(if (includeHistory) 3 else 1)) {
                     val batch = TbOrders.fetchBoughtListWith(cookies, page)
                     batch.forEach { orders.putIfAbsent(it.orderId, it) }
                     if (batch.size < 10) break
                 }
+                orders.values.filter { it.tradeStatus.contains("CLOSED") || it.tradeStatus == "WAIT_BUYER_PAY" || it.statusText == "交易关闭" }
+                    .forEach { observed.add(OrderRecords.key("taobao", account.id, it.orderId)) }
                 // 2) 过滤有物流的订单（跳过交易关闭/待付款）
                 val withParcels = orders.values.filter { o ->
-                    !o.tradeStatus.contains("CLOSED") &&
+                    !o.isPaidUnshipped() && !o.tradeStatus.contains("CLOSED") && o.tradeStatus != "WAIT_BUYER_PAY" &&
                             o.statusText != "交易关闭" &&
                             o.statusText != "交易成功（未发货）"
                 }
@@ -272,6 +285,13 @@ object SyncEngine {
                         if (g.name.isNotBlank()) goodsByMail[p.mailNo] = g
                     }
                 }
+                val pending = orders.values.mapNotNull { it.pendingItem(account) }
+                pending.forEach { p ->
+                    orders[p.queryChannel]?.let { o ->
+                        if (o.goodsName.isNotBlank()) goodsByMail[p.mailNo] = JdGoods(name = o.goodsName,
+                            imageUrl = if (o.goodsPic.startsWith("//")) "https:${o.goodsPic}" else o.goodsPic)
+                    }
+                }
                 if (goodsByMail.isNotEmpty()) {
                     val merged = Store.jdGoods(act).toMutableMap()
                     goodsByMail.forEach { (k, v) ->
@@ -285,29 +305,32 @@ object SyncEngine {
                     Store.saveJdGoods(act, merged)
                 }
                 allItems.addAll(parcels.mapNotNull { p -> toItem(p, account) })
+                allItems.addAll(pending)
             }
-            return allItems to err
+            return Triple(allItems, err, observed)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Throwable) {
             Log.w(TAG, "tb sync fail: $e")
-            return allItems to (e.message ?: "淘宝同步失败")
+            return Triple(allItems, e.message ?: "淘宝同步失败", observed)
         }
     }
 
     /** 拼多多：逐账号**流式**抓取——每增量一批（订单+商品图）先上报（实时上涨），最终返回全量 */
-    private suspend fun fetchPddAll(act: Context, onPddProgress: ((List<ExpressItem>, Map<String, JdGoods>) -> Unit)? = null): Triple<List<ExpressItem>?, Map<String, JdGoods>, String?> {
+    private suspend fun fetchPddAll(act: Context, includeHistory: Boolean, onProgress: ((List<ExpressItem>, Map<String, JdGoods>) -> Unit)? = null): Triple<List<ExpressItem>?, Map<String, JdGoods>, String?> {
         val accounts = Store.accounts(act, Store.CH_PDD).filter { it.enabled }
         val allItems = LinkedHashMap<String, ExpressItem>()
         val goodsAcc = HashMap<String, JdGoods>()
         var err: String? = null
         for (account in accounts) {
             try {
-                val (items, goodsMap, e) = fetchPddStream(act, account) { batch, goods ->
+                val (items, goodsMap, e) = fetchPddStream(act, account, includeHistory) { batch, goods ->
                     if (batch.isNotEmpty()) {
                         goodsAcc.putAll(goods)
                         batch.forEach { allItems.put(it.mailNo, it) }
                         // 每轮批次都上报（不只新单）：成熟设备已无新增单，若只报 fresh
                         // 首页「首批即停圈」永远不触发，转圈会拖到全量抓完
-                        onPddProgress?.invoke(batch, goods)
+                        onProgress?.invoke(batch, goods)
                     }
                 }
                 goodsAcc.putAll(goodsMap)
@@ -331,10 +354,11 @@ object SyncEngine {
     private suspend fun fetchPddStream(
         act: Context,
         account: com.halo.expressassistant.data.BoundAccount?,
+        includeHistory: Boolean,
         onBatch: (List<ExpressItem>, Map<String, JdGoods>) -> Unit
     ): Triple<List<ExpressItem>?, Map<String, JdGoods>, String?> =
         suspendCancellableCoroutine { cont ->
-            PddListFetcher.fetchStream(act, account, onBatch) { items, goods, error ->
+            PddListFetcher.fetchStream(act, account, onBatch, includeHistory) { items, goods, error ->
                 if (cont.isActive) cont.resume(Triple(items, goods, error))
             }
         }
@@ -363,14 +387,16 @@ object SyncEngine {
             // 揽收 = 快递已取件发出 → 已发货/运输中（原误归「未发货」组）
             label.contains("揽收") || (label.contains("发货") && !label.contains("待发货")) -> 2
             label.contains("下单") || label.contains("待发货") -> 1
-            else -> 0
+            label.contains("运输") || label.contains("待取件") -> 0
+            else -> -1
         }
         val stateNum = when (state) {
             3 -> 107
             5 -> 105
             2 -> 104
             1 -> 103
-            else -> 105
+            0 -> 104
+            else -> 0
         }
         val eta = EtaParser.extract(p.latestText, p.stateLabel)
         return ExpressItem(

@@ -74,6 +74,7 @@ class DetailActivity : AppCompatActivity() {
         var item = Store.items(this).firstOrNull { it.mailNo == inputItem.mailNo } ?: inputItem
         displayedItem = item
         binding.toolbar.inflateMenu(R.menu.detail_menu)
+        binding.toolbar.menu.findItem(R.id.action_trace).isVisible = !item.orderOnly
         val traceView = binding.toolbar.menu.findItem(R.id.action_trace).actionView
         if (traceView != null) {
             // 右移边距：按钮右边缘与下方卡片右边缘（屏幕右 12dp）齐平
@@ -128,7 +129,7 @@ class DetailActivity : AppCompatActivity() {
                 binding.container.removeAllViews()
                 addHeader(binding.container, item)
                 binding.container.addView(text("正在加载物流轨迹…"))
-                var detail = when (item.source) {
+                var detail = if (item.orderOnly) ExpressDetail(item.mailNo, item.companyName, item.state, false) else when (item.source) {
                     "manual" -> {
                         val cached = Store.manualTraces(this@DetailActivity, item.mailNo)
                         if (cached != null) ExpressDetail(item.mailNo, item.companyName, item.state, item.isCompleted(), cached, item.eta)
@@ -354,7 +355,7 @@ class DetailActivity : AppCompatActivity() {
             setTextColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.textColorPrimary, Color.BLACK))
         })
         texts.addView(TextView(this).apply {
-            text = item.mailNo
+            text = item.displayReference()
             textSize = 13f
             setTextColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.textColorSecondary, Color.GRAY))
             setPadding(0, dp(4), 0, 0)
@@ -412,7 +413,7 @@ class DetailActivity : AppCompatActivity() {
         val progressText = TextView(this).apply {
             text = if (item.stateNum in 108..111) "已终止"
             else if (progress >= 0) "运输进度：$progress%"
-            else "待更新"
+            else if (item.orderOnly) "等待发货" else "待更新"
             textSize = 14f
             setTextColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.colorPrimary, Color.BLUE))
         }
@@ -494,6 +495,7 @@ class DetailActivity : AppCompatActivity() {
     }
 
     private fun startResolve(item: ExpressItem, silent: Boolean = false) {
+        if (item.orderOnly) return
         val isJd = item.provider == "JingDong" || item.companyCode.startsWith("JD")
         val isPdd = item.source == "pdd"
         if (isJd && Store.accounts(this, Store.CH_JD).none { it.enabled }) {

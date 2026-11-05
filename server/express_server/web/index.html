@@ -145,7 +145,7 @@ function card(r) {
     <div class="meta"><span class="chip state ${r.section === "abnormal" ? "bad" : ""}">${esc(r.sectionLabel === r.status ? r.status : r.sectionLabel + " · " + r.status)}</span>
       <span class="chip">${esc(r.sourceLabel)}</span>${r.station ? `<span class="chip">${esc(r.station)}</span>` : ""}${r.eta ? `<span class="chip">预计 ${esc(r.eta)}</span>` : ""}</div>
     <div class="latest">${esc(r.latestText)}</div>
-    <div class="muted">${esc(r.companyName)} ${esc(r.mailNo)}${r.latestTime ? " · " + esc(r.latestTime) : ""}</div>
+    <div class="muted">${esc(r.companyName)} ${esc(r.orderOnly ? "订单号：" + r.orderId : r.mailNo)}${r.latestTime ? " · " + esc(r.latestTime) : ""}</div>
   </div></div>`;
 }
 
@@ -160,7 +160,7 @@ async function openDetail(no, refresh) {
     ${d.pickupCode ? `<div class="code big"><span>取件码</span><b>${esc(d.pickupCode)}</b></div>` : ""}
     <div class="meta"><span class="chip state">${esc(d.status)}</span><span class="chip">${esc(d.sourceLabel)}${d.account ? " · " + esc(d.account) : ""}</span>
       ${d.eta ? `<span class="chip">预计 ${esc(d.eta)}</span>` : ""}${d.goodsCount ? `<span class="chip">${esc(d.goodsCount)}</span>` : ""}</div>
-    <p class="muted">${esc(d.companyName)} ${esc(d.mailNo)}${d.station ? " · " + esc(d.station) : ""}</p>
+    <p class="muted">${esc(d.companyName)} ${esc(d.orderOnly ? "订单号：" + d.orderId : d.mailNo)}${d.station ? " · " + esc(d.station) : ""}</p>
     <div class="row"><button id="refreshTrace">刷新轨迹</button><button id="hideItem">从列表移除</button>
       <span class="muted">${d.traceFetchedAt ? "轨迹更新于 " + fmtTime(d.traceFetchedAt) : ""}</span></div>
     <ul class="timeline">${(d.trace || []).map(p => `<li><div>${esc(p.context)}</div><div class="t">${esc(p.time)}</div></li>`).join("") || `<li><div>${esc(d.latestText)}</div><div class="t">${esc(d.latestTime)}</div></li>`}</ul>`;

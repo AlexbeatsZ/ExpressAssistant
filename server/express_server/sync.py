@@ -20,6 +20,16 @@ TRACE_TTL_MS = 30 * 60 * 1000
 TRACE_LIMIT = 25  # 每个账号每次同步最多补抓多少个在途件轨迹（浏览器渠道较慢）
 
 
+def order_key(item: dict) -> tuple:
+    return item.get("source"), item.get("accountId"), item.get("queryChannel")
+
+
+def merge_order_history(fresh: list[dict], old: list[dict], observed: set[tuple] | None = None) -> list[dict]:
+    union = {i["mailNo"]: i for i in reversed(fresh + [i for i in old if not (i.get("orderOnly") and order_key(i) in (observed or set()))])}
+    actual = {order_key(i) for i in union.values() if not i.get("orderOnly") and i.get("queryChannel")}
+    return [i for i in union.values() if not (i.get("orderOnly") and order_key(i) in actual)]
+
+
 class SyncEngine:
     def __init__(self, store: Store, bm: BrowserManager):
         self.store = store
@@ -28,6 +38,7 @@ class SyncEngine:
         self.status: dict[str, Any] = {"running": False, **store.data.get("lastSync", {})}
         self._cainiao: list[dict] | None = None
         self._cainiao_error = ""
+        self._observed_orders: set[tuple] = set()
 
     def _cookies(self, acc: dict) -> list[dict]:
         name = acc["payload"].get("profile")
@@ -62,7 +73,8 @@ class SyncEngine:
                     items += got
                     traces.update(tr)
                 elif channel == "taobao":
-                    got, g, tr = await taobao.fetch(acc, self._cookies(acc))
+                    got, g, tr, observed = await taobao.fetch(acc, self._cookies(acc))
+                    self._observed_orders.update(observed)
                     items += got
                     goods.update(g)
                     traces.update(tr)
@@ -103,6 +115,7 @@ class SyncEngine:
         st = self.store
         old = {i["mailNo"]: i for i in st.items}
         self._cainiao, self._cainiao_error = None, ""
+        self._observed_orders = set()
         active = [c for c in channels if st.accounts(c, enabled_only=True)]
         results = dict(zip(active, await asyncio.gather(*(self._channel(c) for c in active))))
         statuses = []
@@ -118,16 +131,15 @@ class SyncEngine:
             if c not in results:
                 return []
             got = results[c][0]
+            if c == "taobao":
+                return merge_order_history(got or [], [i for i in old.values() if i.get("source") == c], self._observed_orders)
             if got:
-                return got + [i for i in old.values() if i.get("source") == c]
+                return merge_order_history(got, [i for i in old.values() if i.get("source") == c])
             return [i for i in old.values() if i.get("source") == c]
 
         merged: dict[str, dict] = {}
         for c in PRIORITY:
             lst = fresh_or_old(c)
-            if c == "pdd":
-                # 拼多多增量合并：本次与历史取并集
-                lst = lst + [i for i in old.values() if i.get("source") == "pdd" and c in results]
             for it in lst:
                 merged.setdefault(it["mailNo"], it)
         self._merge_cainiao(merged, old, channels, "taobao" in results)
@@ -146,7 +158,7 @@ class SyncEngine:
         for mail, it in merged.items():
             if mail in hidden:
                 continue
-            prev = old.get(mail)
+            prev = old.get(mail) or next((i for i in old.values() if i.get("orderOnly") and it.get("queryChannel") and order_key(i) == order_key(it)), None)
             if prev:
                 if it.get("source") == "pdd" and pdd.prompt_only(it):
                     it["latestText"] = prev.get("latestText") or it["latestText"]
@@ -217,7 +229,7 @@ class SyncEngine:
     async def _refresh_traces(self, items: list[dict]) -> None:
         jobs: dict[tuple[str, str], list[dict]] = {}
         for it in items:
-            if it.get("source") in ("jd", "pdd") and not is_done(it) and self._trace_stale(it):
+            if it.get("source") in ("jd", "pdd") and not it.get("orderOnly") and not is_done(it) and self._trace_stale(it):
                 jobs.setdefault((it["source"], it.get("accountId", "")), []).append(it)
         await asyncio.gather(*(self._traces_for(c, aid, lst[:TRACE_LIMIT]) for (c, aid), lst in jobs.items()))
 

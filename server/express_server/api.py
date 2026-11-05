@@ -44,6 +44,9 @@ class Api:
         g = self.store.goods(it["mailNo"]) or {}
         out = {
             "mailNo": it["mailNo"],
+            "orderOnly": bool(it.get("orderOnly")),
+            "orderId": it.get("queryChannel", "") if it.get("source") in ("taobao", "pdd", "jd") else "",
+            "trackingNo": "" if it.get("orderOnly") or it.get("source") == "jd" or it.get("source") == "pdd" and it["mailNo"] == it.get("queryChannel") else it["mailNo"],
             "companyName": it.get("companyName", ""),
             "source": it.get("source", ""),
             "sourceLabel": CHANNEL_LABELS.get(it.get("source", ""), ""),

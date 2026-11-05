@@ -59,12 +59,12 @@ async def _mtop(s: aiohttp.ClientSession, cookies: str, api: str, data_raw: str)
 
 def _parse_bought(body: str) -> list[dict]:
     i, j = body.find("("), body.rfind(")")
-    if i < 0 or j <= i:
-        return []
-    root = json.loads(body[i + 1:j])
+    root = json.loads(body if body.lstrip().startswith("{") else body[i + 1:j])
     ret = " ".join(root.get("ret") or [])
     if "SESSION_EXPIRED" in ret or "FAIL_SYS_TOKEN" in ret:
         raise RuntimeError("淘宝登录已失效，请重新登录")
+    if ret and not any(str(r).startswith("SUCCESS") for r in root["ret"]):
+        raise RuntimeError("淘宝订单读取失败，请检查登录状态")
     data = root.get("data") or {}
     inner = None
     if isinstance(data.get("result"), str):
@@ -181,9 +181,11 @@ def _to_item(p: dict, account: dict) -> dict:
         state = 2
     elif "下单" in label or "待发货" in label:
         state = 1
-    else:
+    elif "运输" in label or "待取件" in label:
         state = 0
-    num = {3: 107, 5: 105, 2: 104, 1: 103}.get(state, 105)
+    else:
+        state = -1
+    num = {3: 107, 5: 105, 2: 104, 1: 103, 0: 104}.get(state, 0)
     return {
         "id": p["mailNo"], "mailNo": p["mailNo"], "companyCode": "", "companyName": p["cpName"] or "淘宝快递",
         "latestText": p["latestText"], "latestTime": p["latestTime"], "state": state, "stateName": label,
@@ -192,8 +194,21 @@ def _to_item(p: dict, account: dict) -> dict:
     }
 
 
-async def fetch(account: dict, cookies_list: list[dict]) -> tuple[list[dict], dict, dict]:
-    """返回 (items, goods{mailNo}, traces{mailNo})。"""
+def _paid_unshipped(order: dict) -> bool:
+    return order.get("tradeStatus") == "WAIT_SELLER_SEND_GOODS" or (
+        not order.get("tradeStatus") and order.get("statusText") in ("买家已付款", "待发货", "等待卖家发货"))
+
+
+def _pending_item(order: dict, account: dict) -> dict:
+    key = f"taobao-order:{account['id']}:{order['orderId']}"
+    return {"id": key, "mailNo": key, "companyCode": "", "companyName": "淘宝订单",
+            "state": 1, "stateNum": 101, "stateName": "待发货", "latestText": order.get("statusText") or "买家已付款",
+            "latestTime": "", "originalName": order.get("goodsName", ""), "queryChannel": order["orderId"],
+            "source": "taobao", "accountId": account["id"], "accountLabel": account.get("label", ""), "orderOnly": True}
+
+
+async def fetch(account: dict, cookies_list: list[dict]) -> tuple[list[dict], dict, dict, set[tuple]]:
+    """返回 (items, goods{mailNo}, traces{mailNo}, observedOrderKeys)。"""
     cookies = cookie_header(cookies_list, *DOMAINS)
     if not cookies:
         raise RuntimeError("淘宝账号未登录")
@@ -213,7 +228,8 @@ async def fetch(account: dict, cookies_list: list[dict]) -> tuple[list[dict], di
             if len(batch) < 10:
                 break
         with_parcels = [o for o in orders.values()
-                        if "CLOSED" not in o["tradeStatus"] and o["statusText"] not in ("交易关闭", "交易成功（未发货）")]
+                        if not _paid_unshipped(o) and "CLOSED" not in o["tradeStatus"]
+                        and o["tradeStatus"] != "WAIT_BUYER_PAY" and o["statusText"] not in ("交易关闭", "交易成功（未发货）")]
         log.info("taobao(%s) orders=%d withParcels=%d", account.get("label"), len(orders), len(with_parcels))
         sem = asyncio.Semaphore(4)
         headers = {"User-Agent": UA, "Accept": "text/html,*/*;q=0.8", "Accept-Language": "zh-CN,zh;q=0.9", "Cookie": cookies}
@@ -229,6 +245,12 @@ async def fetch(account: dict, cookies_list: list[dict]) -> tuple[list[dict], di
 
         results = await asyncio.gather(*(one(o) for o in with_parcels))
     items, goods, traces = [], {}, {}
+    for order in orders.values():
+        if _paid_unshipped(order):
+            items.append(_pending_item(order, account))
+            pic = order.get("goodsPic", "")
+            goods[items[-1]["mailNo"]] = {"name": order.get("goodsName", ""),
+                                          "imageUrl": f"https:{pic}" if pic.startswith("//") else pic, "count": ""}
     for o, parsed in results:
         if not parsed:
             continue
@@ -239,7 +261,8 @@ async def fetch(account: dict, cookies_list: list[dict]) -> tuple[list[dict], di
         if o.get("goodsName"):
             pic = o.get("goodsPic", "")
             goods[parcel["mailNo"]] = {"name": o["goodsName"], "imageUrl": f"https:{pic}" if pic.startswith("//") else pic, "count": ""}
-    return items, goods, traces
+    return items, goods, traces, {("taobao", account["id"], o["orderId"]) for o in orders.values()
+                                   if "CLOSED" in o["tradeStatus"] or o["tradeStatus"] == "WAIT_BUYER_PAY" or o["statusText"] == "交易关闭"}
 
 
 def label_from_cookies(cookies: dict[str, str]) -> tuple[str, str]:

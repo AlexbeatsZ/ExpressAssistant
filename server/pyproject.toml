@@ -1,6 +1,6 @@
 [project]
 name = "express-assistant-server"
-version = "0.1.4"
+version = "0.1.5"
 description = "快递助手 PC 服务器：独立抓取小米/京东/淘宝/拼多多快递，提供网页查看与 AI（REST / MCP）接口"
 requires-python = ">=3.11"
 dependencies = [

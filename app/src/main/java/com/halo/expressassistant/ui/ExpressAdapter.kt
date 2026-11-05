@@ -188,7 +188,7 @@ class ExpressAdapter(
             val goods = Store.jdGoods(binding.root.context)[item.mailNo]
             val goodsTitle = goods?.shortName?.ifBlank { goods?.name }.orEmpty()
             binding.company.text = goodsTitle.ifBlank { item.companyName }
-            binding.mailNo.text = item.mailNo
+            binding.mailNo.text = item.displayReference()
             binding.latest.text = item.latestText.ifBlank { "点击查看详情" }
             binding.time.text = item.latestTime
             // 二级菜单（完成/异常）不再外显最末轨迹与时间（含分隔线）；仅在途首页显示

@@ -20,6 +20,7 @@ from ..parse import PDD_COMPLETED, first_string, first_string_deep, first_value_
 log = logging.getLogger("pdd")
 
 ORDER_PAGE = "https://mobile.yangkeduo.com/orders.html"
+INITIAL_ORDERS = "pdd:initial-orders"
 TRACE_PAGE = "https://mobile.yangkeduo.com/order.html?order_sn="
 LOGIN_URL = "https://mobile.yangkeduo.com/login.html?_x_no_login_launch=1"
 
@@ -46,6 +47,8 @@ PROMPTS = {"交易成功", "待评价", "已评价", "待发货", "待收货", "
 
 
 def _relevant(url: str, body: str) -> bool:
+    if url == INITIAL_ORDERS:
+        return True
     u, b = url.lower(), body[:4000].lower()
     return "proxy/api" in u and (
         any(k in u for k in ("order", "logistic", "express", "track", "parcel", "goods"))
@@ -109,6 +112,7 @@ def _parse_order(o: dict, out: dict, goods: dict, account: dict) -> None:
         "state": state, "stateName": label[:60], "stateNum": number, "receiptConfirmed": received,
         "provider": "Pinduoduo", "queryChannel": key, "source": "pdd",
         "accountId": account["id"], "accountLabel": account.get("label", ""),
+        "orderOnly": state == 1 and not first_string(o, TRACK_KEYS),
     }
     g = _goods(o)
     if g:
@@ -182,23 +186,31 @@ async def fetch(bm: BrowserManager, account: dict, profile: Path) -> tuple[list[
         await asyncio.sleep(4)
         if _is_login(page.url):
             raise RuntimeError("拼多多登录已失效，请在服务器网页里重新登录拼多多")
+        # 最新首屏由 SSR 注入；后续 order_list 响应通常从第二页开始。
+        initial = await page.evaluate("""() => {
+            const s=window.rawData && window.rawData.ordersStore;
+            return s && s.initOdersList ? {orders:s.initOdersList} : null;
+        }""")
+        if initial is not None:
+            caps.insert(0, (INITIAL_ORDERS, json.dumps(initial, ensure_ascii=False)))
         last, stable = -1, 0
         for rnd in range(1, 19):
             orders, _ = _convert(caps, account)
-            if rnd >= 3 and not orders and _empty_authenticated(caps):
+            if rnd >= 5 and not orders and _empty_authenticated(caps):
                 break
             log.info("pdd round=%d orders=%d caps=%d", rnd, len(orders), len(caps))
-            if rnd in (2, 5):
-                await click_text(page, ["全部", "全部订单"])
-            await click_text(page, ["加载更多", "查看更多", "下一页"])
-            await swipe_up(page)
+            if rnd <= 3:
+                await click_text(page, [["待发货"], ["待收货"], ["全部", "全部订单"]][rnd - 1])
+            else:
+                await click_text(page, ["加载更多", "查看更多", "下一页"])
+                await swipe_up(page)
             if len(orders) == last:
                 stable += 1
             else:
                 stable, last = 0, len(orders)
-            if orders and stable >= 3 and rnd >= 6:
+            if orders and stable >= 3 and rnd >= 9:
                 break
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(4 if rnd <= 3 else 2.5)
         await asyncio.gather(*tasks, return_exceptions=True)
         await ctx.storage_state(path=str(profile))
         orders, goods = _convert(caps, account)

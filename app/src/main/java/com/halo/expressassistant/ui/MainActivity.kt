@@ -110,7 +110,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnAddPackage.setOnClickListener { addFromSearch() }
         selectedTab = savedInstanceState?.getInt("selected_tab") ?: if (intent.getBooleanExtra("identity_code", false)) com.halo.expressassistant.R.id.nav_identity else com.halo.expressassistant.R.id.nav_express
         binding.bottomNavigation.selectedItemId = selectedTab
-        showTab(selectedTab); reload(); maybeAutoSync()
+        showTab(selectedTab); reload()
         if (intent.getBooleanExtra("sync_now", false)) binding.root.post { handleSyncNow() }
         if (intent.getBooleanExtra("add", false)) binding.root.post { binding.searchInput.requestFocus() }
         binding.root.post { handleNavigationIntent(intent) }
@@ -181,7 +181,7 @@ class MainActivity : AppCompatActivity() {
         reload()
         if (selectedTab == com.halo.expressassistant.R.id.nav_identity) identityPanel.show()
         com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(this)
-        PddTraceBackfill.backfill(this, lifecycleScope)
+        if (!maybeAutoSync() && !SyncEngine.isRunning) PddTraceBackfill.backfill(this, lifecycleScope)
     }
 
     override fun onPause() {
@@ -438,10 +438,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun syncAll(onDone: (() -> Unit)? = null) {
+        if (SyncEngine.isRunning) {
+            binding.swipeRefresh.isRefreshing = false
+            Toast.makeText(this, "正在刷新", Toast.LENGTH_SHORT).show()
+            return
+        }
         Store.setLastAutoSync(this, System.currentTimeMillis())
-        // 调试用：intent extra "skip_channels"（逗号分隔 xiaomi/jd/taobao）模拟未登录组合
-        val skip = intent.getStringExtra("skip_channels")
-            ?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
         CoroutineScope(Dispatchers.Main).launch {
             var spinnerStopped = false
             fun stopSpinnerIfNeeded() {
@@ -461,7 +463,7 @@ class MainActivity : AppCompatActivity() {
                 // 首批到达即停止下拉转圈（在途/完成第一页4件/异常第一页4件已可显示）
                 // 已移除单号快照：流式增量入库同样跳过，防「移除后下次刷新复活」
                 val hiddenNos = Store.xiaomiHidden(this@MainActivity).mapTo(HashSet()) { it.mailNo }
-                val report = SyncEngine.sync(this@MainActivity, skip, onPddProgress = { batch, goods ->
+                val report = SyncEngine.sync(this@MainActivity, onProgress = { batch, goods ->
                     if (batch.isNotEmpty()) {
                         // 在途优先：批次中「在途」立即入库+显示；完成/异常等本轮抓取 finish
                         // （syncInternal 收尾统一保存），实现「在途优先、完成/异常后台跑」
@@ -479,7 +481,7 @@ class MainActivity : AppCompatActivity() {
                             }
                             val current = Store.items(this@MainActivity).toMutableList()
                             val known = current.map { it.mailNo }.toSet()
-                            val add = transportBatch.filter { it.mailNo !in known && it.source == "pdd" && it.mailNo !in hiddenNos }
+                            val add = transportBatch.filter { it.mailNo !in known && it.mailNo !in hiddenNos }
                             if (add.isNotEmpty()) {
                                 current.addAll(add)
                                 Store.saveItems(this@MainActivity, current)
@@ -615,23 +617,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun maybeAutoSync() {
-        if (!Store.hasAnyAccount(this)) return
+    private fun maybeAutoSync(): Boolean {
+        if (!Store.hasAnyAccount(this) || SyncEngine.isRunning) return false
         val now = System.currentTimeMillis()
-        if (now - Store.lastAutoSync(this) < 60_000) return
+        if (now - Store.lastAutoSync(this) < 60_000) return false
         Store.setLastAutoSync(this, now)
-        // 与 syncAll 相同的 skip_channels 处理：冷启动自动化调试时也能跳过指定渠道
-        val skip = intent.getStringExtra("skip_channels")
-            ?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
-        CoroutineScope(Dispatchers.Main).launch {
+        lifecycleScope.launch {
             try {
-                SyncEngine.sync(this@MainActivity, skip)
+                SyncEngine.sync(this@MainActivity)
                 refreshAllDetails()
                 reload()
+                PddTraceBackfill.backfill(this@MainActivity, this, force = true)
             } catch (e: Throwable) {
                 // 静默失败，用户手动同步时会看到提示
             }
         }
+        return true
     }
 
     private fun openDetail(item: ExpressItem) {
@@ -752,7 +753,7 @@ class MainActivity : AppCompatActivity() {
         )
         texts.addView(
             TextView(this).apply {
-                text = item.mailNo
+                text = item.displayReference()
                 textSize = 13f
                 setTextColor(onSurfaceVariant())
             }
@@ -778,7 +779,7 @@ class MainActivity : AppCompatActivity() {
         val progressText = TextView(this).apply {
             text = if (item.stateNum in 108..111) "已终止"
             else if (progress >= 0) "运输进度：$progress%"
-            else "待更新"
+            else if (item.orderOnly) "等待发货" else "待更新"
             textSize = 14f
             setTextColor(primary())
         }
