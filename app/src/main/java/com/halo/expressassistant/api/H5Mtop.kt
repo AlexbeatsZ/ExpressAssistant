@@ -18,7 +18,7 @@ internal class H5Mtop(header: String) {
             val p = it.trim().split('=', limit = 2)
             if (p.size == 2 && p[0].isNotBlank()) cookies[p[0]] = p[1]
         }
-        require(cookies.isNotEmpty()) { "缺少登录会话，请重新导入" }
+        if (cookies.isEmpty()) throw CainiaoServiceException(CainiaoServiceException.Kind.NO_SESSION)
     }
 
     private fun request(url: okhttp3.HttpUrl): JSONObject {
@@ -29,7 +29,7 @@ internal class H5Mtop(header: String) {
             .header("Accept", "application/json").build()
         try {
             return client.newCall(req).execute().use { r ->
-                check(r.isSuccessful) { "菜鸟请求失败（HTTP ${r.code}）" }
+                if (!r.isSuccessful) throw CainiaoServiceException(CainiaoServiceException.Kind.REJECTED)
                 for (line in r.headers.values("Set-Cookie")) {
                     val first = line.substringBefore(';').split('=', limit = 2)
                     if (first.size == 2) {
@@ -38,10 +38,10 @@ internal class H5Mtop(header: String) {
                     }
                 }
                 val raw = r.body?.string().orEmpty()
-                try { JSONObject(raw) } catch (_: Exception) { error("菜鸟返回了无法解析的响应") }
+                try { JSONObject(raw) } catch (_: Exception) { throw CainiaoServiceException(CainiaoServiceException.Kind.INVALID_RESPONSE) }
             }
         } catch (_: IOException) {
-            error("连接菜鸟失败，请检查网络后重试")
+            throw CainiaoServiceException(CainiaoServiceException.Kind.NETWORK)
         }
     }
 
@@ -50,7 +50,7 @@ internal class H5Mtop(header: String) {
         // The unsigned request may return TOKEN_EMPTY while issuing fresh tokens.
         request(base.newBuilder().addQueryParameter("appKey", APPKEY).build())
         val token = cookies["_m_h5_tk"]?.substringBefore('_')?.takeIf { it.isNotBlank() }
-            ?: error("菜鸟未下发会话令牌，请重新导入登录态")
+            ?: throw CainiaoServiceException(CainiaoServiceException.Kind.REJECTED)
         val stamp = System.currentTimeMillis().toString()
         val raw = data.toString()
         val sign = MessageDigest.getInstance("MD5").digest("$token&$stamp&$APPKEY&$raw".toByteArray())
@@ -63,7 +63,7 @@ internal class H5Mtop(header: String) {
         val codes = (0 until (ret?.length() ?: 0)).map {
             ret!!.optString(it).substringBefore("::").filter { c -> c in 'A'..'Z' || c.isDigit() || c == '_' }.take(80)
         }
-        check("SUCCESS" in codes) { "菜鸟拒绝请求：${codes.joinToString().ifBlank { "UNKNOWN" }}；必要时重新导入登录态" }
+        if ("SUCCESS" !in codes) throw CainiaoServiceException.fromCodes(codes)
         return result.optJSONObject("data") ?: JSONObject()
     }
 
@@ -71,7 +71,7 @@ internal class H5Mtop(header: String) {
         private const val APPKEY = "12574478"
         private const val UA = "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36"
         private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
-            .connectTimeout(15, TimeUnit.SECONDS).readTimeout(25, TimeUnit.SECONDS)
-            .callTimeout(30, TimeUnit.SECONDS).build()
+            .connectTimeout(8, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS)
+            .callTimeout(12, TimeUnit.SECONDS).build()
     }
 }

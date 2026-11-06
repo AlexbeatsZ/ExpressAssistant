@@ -7,6 +7,24 @@ import javax.crypto.spec.SecretKeySpec
 
 /** Cainiao 8.11.1023: the HMAC input is hex TEXT, rather than standard TOTP bytes. */
 object CainiaoIdentity {
+    data class OnlineCode(val value: String, val expiresAtMs: Long)
+    data class DisplayCode(val value: String, val expiresAtMs: Long, val online: Boolean)
+
+    fun parseOnline(model: JSONObject, fetchedAtMs: Long = System.currentTimeMillis()): OnlineCode {
+        val code = model.optString("identityCode")
+        val seconds = model.optLong("expireTime", 0)
+        require(model.optString("certificated").equals("true", true) &&
+            code.matches(Regex("CS8[0-9]{11,19}[A-F]")) && seconds in 1..86400) { "在线身份码资料无效" }
+        return OnlineCode(code, fetchedAtMs + seconds * 1000)
+    }
+
+    fun display(material: Material?, online: OnlineCode?, nowMs: Long = System.currentTimeMillis()): DisplayCode? {
+        if (online != null && nowMs < online.expiresAtMs) return DisplayCode(online.value, online.expiresAtMs, true)
+        if (material == null || nowMs >= material.expiresAtMs) return null
+        val next = ((nowMs / 1000 / material.periodSeconds) + 1) * material.periodSeconds * 1000
+        return DisplayCode(generate(material, nowMs), minOf(next, material.expiresAtMs), false)
+    }
+
     data class Material(
         val key: String,
         val userIndex: Long,

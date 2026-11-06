@@ -256,7 +256,8 @@ curl --fail-with-body -sS -H "Authorization: Bearer $EXPRESS_PHONE_API_TOKEN" \
 | GET | `/api/pickup` | 手机待取件缓存 |
 | POST | `/api/sync` | 返回 202，开始手机各渠道同步；重复进行中返回 409 |
 | GET | `/api/sync` | 手机同步 running、finishedAt、statuses、total；逐项检查 error |
-| POST | `/api/identity/refresh` | 使用已导入的本人菜鸟会话更新材料；返回状态元数据 |
+| POST | `/api/identity/refresh` | 使用本人菜鸟会话更新离线材料；返回状态元数据 |
+| POST | `/api/identity/online/refresh` | 请求在线身份码并加密缓存；仅返回状态元数据 |
 
 手机维护接口不导出身份码原文、密钥或 Cookie。身份码在手机界面显示条形码。POST setup 格式如下（只有结构示意，所有凭证要替换为本人真实材料）：
 
@@ -293,7 +294,7 @@ curl --fail-with-body -sS -X POST -H "Authorization: Bearer $EXPRESS_PHONE_API_T
   "$EXPRESS_PHONE_BASE_URL/api/identity/refresh"
 ```
 
-setup 的 cainiao、accounts、items、goods 均可按需提供，至少有一个有效部分；只导入快递/商品不改动现有加密身份会话。适合补回历史缓存。初始化和续期失败返回 HTTP 400；响应不会回显私有请求内容。读取状态可验证材料是否更新。ADB 转发只解决电脑到手机的访问，服务器接口不依赖该转发或手机在线。
+setup 的 cainiao、accounts、items、goods 均可按需提供，至少有一个有效部分；只导入快递/商品不改动现有加密身份会话。适合补回历史缓存。初始化格式错误返回 HTTP 400；v0.9.3 起身份刷新在菜鸟会话失效/未登录时返回 409，网络/平台拒绝/无效响应返回 503。手机管理 Bearer 不正确仍返回 401。响应不会回显私有请求内容。读取状态可验证材料是否更新。ADB 转发只解决电脑到手机的访问，服务器接口不依赖该转发或手机在线。
 
 ## 当前验证范围
 
@@ -301,9 +302,9 @@ setup 的 cainiao、accounts、items、goods 均可按需提供，至少有一�
 
 本轮重新同步拼多多取得 153 条，保留跨渠道历史共 183 件，全部归已完成；不再把「拼过几次」和「已提货」误列派送中。使用订单 shipping_status / receive_time 和明确完成状态判断，不按包裹年龄猜测。当前没有可供真实站点核对的待取件码。京东本轮订单列表未返回数据，旧 17 条保留，需重新检查官方登录；不要把历史缓存当作本轮实时成功。
 
-手机 v0.9.2 已覆盖安装 Redmi K70，同一个主应用，未安装测试组件。手机维护 API 仍为上述本机接口；手机和服务器缓存独立。身份码展示与材料续期实现保留，长期会话寿命与站点扫码不在本轮保证范围。
+手机 v0.9.3 已覆盖安装 Redmi K70，同一个主应用，未安装测试组件。手机维护 API 仍为上述本机接口；手机和服务器缓存独立。身份码展示与材料续期实现保留，长期会话寿命与站点扫码不在本轮保证范围。
 
-手机号独立登录的研究见 `docs/design/cainiao-login.md`：官方统一登录页有短信登录，APK 有会员会话转换与 refreshToken 续登；新网页登录态的消费者业务权限尚待本人完成官方登录后验证，未将未验证流程加入正式版。
+手机号独立登录的研究见 `docs/design/cainiao-login.md`：公开统一登录页固定为商家域21，消费者App为78/cainiao2c，修改参数没有变为消费者入口。APK已还原短信、SSO转会员和refreshToken续登，但独立消费者登录尚未实现，未将未验证流程加入正式版。
 
 ### v0.9.1 手机状态复核
 
@@ -314,3 +315,30 @@ K70 当前188件、3个平台账号；188件均已完成，无伪造的派送中
 ### v0.9.2 手机刷新与待发货订单
 
 手机 POST /api/sync 默认只刷新最新一页，保留完整旧缓存。需要补全历史时发送 {"includeHistory":true}；这会继续平台历史翻页，耗时较长。GET /api/sync 查看运行状态，同步中重复 POST 返回 409。日常查询不需要 includeHistory。手机已付款未发货订单返回 orderOnly=true、orderId 与商品名，没有运单或取件码，发货后重新查询列表获得当前记录键。
+
+### v0.9.3 身份刷新与错误处理
+
+手机身份页优先在线码，失败时仍展示未过期离线材料生成的条形码；MM:SS 倒计时按实际码期限。本人当前离线周期600秒，同周期内手动刷新不保证改变码。材料的15天缓存期限与菜鸟登录会话期限不同。
+
+GET /api/status 的 identity 增加以下元数据，不含实际身份码：
+
+| 字段 | 含义 |
+| --- | --- |
+| available / codeLength | 当前是否可显示码及其长度 |
+| source | online 或 offline（当前有有效码时） |
+| nextChangeAtMs | 当前码换码/失效时间，Unix毫秒 |
+| materialExpiresAtMs / periodSeconds | 离线材料期限、离线码周期 |
+| lastRefreshedAtMs | 最近成功更新离线材料的时间 |
+| lastRefreshAttemptAtMs | 最近一次联网取码或材料更新尝试 |
+| refreshErrorCode / refreshError | 固定分类错误，成功后为空 |
+| needsLogin | 已确认会话失效/未登录时为 true |
+
+联网刷新返回 409 的示例（元数据可另外含仍有效离线码状态）：
+
+```json
+{"ok":false,"errorCode":"CAINIAO_LOGIN_EXPIRED","error":"菜鸟登录已过期，请重新登录","identity":{"available":true,"source":"offline","needsLogin":true}}
+```
+
+调用方遇到 CAINIAO_LOGIN_EXPIRED/CAINIAO_NO_SESSION 应请求用户正常登录或导入新的本人授权会话，停止频繁自动重试；不要据此删除离线材料或已有包裹。CAINIAO_NETWORK/REJECTED/INVALID_RESPONSE 为503，可稍后重试。这里的状态不是独立手机号登录已实现的承诺。
+
+2026-11-06 K70实机：离线条形码跨周期变化且与独立算法匹配；两个刷新端点均明确报告会话失效并保留有效码，账号/包裹仍在。新的在线取码成功路径需要恢复有效会话后继续验收。

@@ -18,7 +18,7 @@ import com.google.zxing.EncodeHintType
 import com.google.zxing.MultiFormatWriter
 import com.halo.expressassistant.api.CainiaoIdentity
 import com.halo.expressassistant.api.CainiaoRenewal
-import com.halo.expressassistant.data.CainiaoSessionStore
+import com.halo.expressassistant.api.CainiaoServiceException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -48,7 +48,7 @@ class IdentityPanel(private val activity: AppCompatActivity) {
         text = "刷新"; setIconResource(com.halo.expressassistant.R.drawable.ic_sync)
         setOnClickListener { update(true) }
     }
-    private var material: CainiaoIdentity.Material? = null
+    private var state = CainiaoRenewal.Snapshot(null, null, 0, null)
     private var previousCode = ""
     private var ticker: Job? = null
     private var visible = false
@@ -65,7 +65,15 @@ class IdentityPanel(private val activity: AppCompatActivity) {
         activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         reloadFromStore(); update(false)
         ticker?.cancel()
-        ticker = activity.lifecycleScope.launch { while (visible) { render(); delay(1000) } }
+        ticker = activity.lifecycleScope.launch {
+            while (visible) {
+                render()
+                if (state.material != null && state.error != CainiaoServiceException.Kind.LOGIN_EXPIRED &&
+                    (state.online?.expiresAtMs ?: 0) <= System.currentTimeMillis() &&
+                    System.currentTimeMillis() - state.lastAttemptAtMs >= 60_000) update(false)
+                delay(1000)
+            }
+        }
     }
 
     fun hide() {
@@ -75,8 +83,8 @@ class IdentityPanel(private val activity: AppCompatActivity) {
 
     fun reloadFromStore() {
         activity.lifecycleScope.launch {
-            material = withContext(Dispatchers.IO) {
-                runCatching { CainiaoSessionStore.read(activity)?.getJSONObject("material")?.let(CainiaoIdentity::parse) }.getOrNull()
+            state = withContext(Dispatchers.IO) {
+                runCatching { CainiaoRenewal.snapshot(activity) }.getOrDefault(CainiaoRenewal.Snapshot(null, null, 0, CainiaoServiceException.Kind.INVALID_RESPONSE))
             }
             render()
         }
@@ -84,25 +92,41 @@ class IdentityPanel(private val activity: AppCompatActivity) {
 
     private fun update(force: Boolean) {
         if (!refresh.isEnabled) return
+        if (!force && state.error == CainiaoServiceException.Kind.LOGIN_EXPIRED) return
         refresh.isEnabled = false
         if (force) refresh.text = "刷新中"
         activity.lifecycleScope.launch {
-            try { material = CainiaoRenewal.refresh(activity, force) }
+            try {
+                try { CainiaoRenewal.online(activity, force) }
+                catch (e: CainiaoServiceException) {
+                    if (e.kind != CainiaoServiceException.Kind.REJECTED) throw e
+                    if (CainiaoRenewal.refresh(activity, force = true) == null) throw e
+                }
+                CainiaoRenewal.refresh(activity)
+            }
             catch (e: CancellationException) { throw e }
-            catch (_: Exception) {
-                if (force) android.widget.Toast.makeText(activity, "刷新失败，请稍后重试", android.widget.Toast.LENGTH_SHORT).show()
-            } finally { refresh.isEnabled = true; refresh.text = "刷新"; render() }
+            catch (e: CainiaoServiceException) {
+                if (force) android.widget.Toast.makeText(activity, e.kind.message, android.widget.Toast.LENGTH_LONG).show()
+            } catch (_: Exception) {
+                if (force) android.widget.Toast.makeText(activity, "身份码刷新失败，请稍后重试", android.widget.Toast.LENGTH_SHORT).show()
+            } finally {
+                state = withContext(Dispatchers.IO) { runCatching { CainiaoRenewal.snapshot(activity) }.getOrDefault(state) }
+                refresh.isEnabled = true; refresh.text = "刷新"; render()
+            }
         }
     }
 
     private fun render() {
-        val m = material
         val now = System.currentTimeMillis()
-        val code = if (m != null) runCatching { CainiaoIdentity.generate(m, now) }.getOrNull() else null
+        val display = runCatching { CainiaoIdentity.display(state.material, state.online, now) }.getOrNull()
+        val code = display?.value
         barcode.visibility = if (code == null) View.GONE else View.VISIBLE
         codeText.visibility = barcode.visibility
-        status.visibility = if (code == null) View.VISIBLE else View.GONE
-        status.text = if (code == null) "身份码暂不可用" else ""
+        status.visibility = View.VISIBLE
+        val seconds = ((display?.expiresAtMs ?: now) - now + 999).coerceAtLeast(0) / 1000
+        val countdown = if (display == null) "" else String.format(java.util.Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60)
+        status.text = listOfNotNull(state.error?.message, countdown.takeIf { it.isNotEmpty() },
+            "身份码暂不可用".takeIf { code == null && state.error == null }).joinToString("\n")
         if (code == null) { barcode.setImageDrawable(null); codeText.text = ""; previousCode = ""; return }
         if (code == previousCode) return
         val matrix = MultiFormatWriter().encode(code, BarcodeFormat.CODE_128, 1200, 360, mapOf(EncodeHintType.MARGIN to 24))

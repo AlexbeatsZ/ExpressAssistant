@@ -2,6 +2,7 @@ package com.halo.expressassistant
 
 import com.halo.expressassistant.api.CainiaoIdentity
 import com.halo.expressassistant.api.CainiaoPackages
+import com.halo.expressassistant.api.CainiaoServiceException
 import com.halo.expressassistant.data.BoundAccount
 import com.halo.expressassistant.data.ExpressItem
 import org.json.JSONObject
@@ -24,6 +25,46 @@ class CainiaoTest {
 
     @Test(expected = IllegalArgumentException::class) fun rejectsExpiredMaterial() {
         CainiaoIdentity.generate(material, material.expiresAtMs)
+    }
+
+    @Test fun onlineCodeTakesPriorityAndExpiresIntoOfflineCode() {
+        val online = CainiaoIdentity.OnlineCode("CS81234567890123456A", 1000)
+        val current = CainiaoIdentity.display(material, online, 999)!!
+        assertTrue(current.online); assertEquals(online.value, current.value)
+        val fallback = CainiaoIdentity.display(material, online, 1000)!!
+        assertFalse(fallback.online); assertEquals(CainiaoIdentity.generate(material, 1000), fallback.value)
+        assertEquals(600000, fallback.expiresAtMs)
+    }
+
+    @Test fun offlineCountdownUsesActualPeriodAndDoesNotChangeCodeOnButtonTime() {
+        val first = CainiaoIdentity.display(material, null, 600001)!!
+        val next = CainiaoIdentity.display(material, null, 601000)!!
+        assertEquals(first.value, next.value)
+        assertEquals(1200000, first.expiresAtMs)
+        assertNotEquals(first.value, CainiaoIdentity.display(material, null, 1200000)!!.value)
+    }
+
+    @Test fun onlineExpiryIsSecondsFromReceiptAndCannotBeMaterialTimestamp() {
+        val model = JSONObject().put("certificated", true).put("identityCode", "CS81234567890123456A").put("expireTime", 120)
+        assertEquals(121000, CainiaoIdentity.parseOnline(model, 1000).expiresAtMs)
+        assertThrows(IllegalArgumentException::class.java) {
+            CainiaoIdentity.parseOnline(model.put("expireTime", 1795000000000L), 1000)
+        }
+    }
+
+    @Test fun expiredLoginHasActionableErrorWithoutEchoingPayload() {
+        val error = CainiaoServiceException.fromCodes(listOf("FAIL_SYS_SESSION_EXPIRED::secret-cookie-do-not-echo"))
+        assertEquals(CainiaoServiceException.Kind.LOGIN_EXPIRED, error.kind)
+        assertTrue(error.message!!.contains("重新登录"))
+        assertFalse(error.message!!.contains("secret-cookie"))
+        assertEquals(CainiaoServiceException.Kind.REJECTED,
+            CainiaoServiceException.fromCodes(listOf("FAIL_SYS_TOKEN_EXPIRED")).kind)
+    }
+
+    @Test fun expiredOfflineMaterialCanStillUseValidOnlineCode() {
+        val expired = material.copy(expiresAtMs = 100)
+        assertNull(CainiaoIdentity.display(expired, null, 100))
+        assertTrue(CainiaoIdentity.display(expired, CainiaoIdentity.OnlineCode("CS81234567890123456A", 200), 100)!!.online)
     }
 
     @Test fun pickupRequiresActualCodeAndHonorsTerminalState() {

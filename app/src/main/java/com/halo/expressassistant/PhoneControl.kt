@@ -3,6 +3,7 @@ package com.halo.expressassistant
 import android.content.Context
 import com.halo.expressassistant.api.CainiaoIdentity
 import com.halo.expressassistant.api.CainiaoRenewal
+import com.halo.expressassistant.api.CainiaoServiceException
 import com.halo.expressassistant.data.CainiaoSessionStore
 import com.halo.expressassistant.data.PhoneProvisioning
 import com.halo.expressassistant.data.Store
@@ -78,7 +79,13 @@ object PhoneControl {
                         json(status().put("message", message))
                     }
                     path == "/api/identity/refresh" && session.method == Method.POST -> {
-                        check(runBlocking { CainiaoRenewal.refresh(ctx, force = true) } != null)
+                        if (runBlocking { CainiaoRenewal.refresh(ctx, force = true) } == null)
+                            throw CainiaoServiceException(CainiaoServiceException.Kind.NO_SESSION)
+                        notifyUi()
+                        json(status())
+                    }
+                    path == "/api/identity/online/refresh" && session.method == Method.POST -> {
+                        runBlocking { CainiaoRenewal.online(ctx, force = true) }
                         notifyUi()
                         json(status())
                     }
@@ -107,6 +114,12 @@ object PhoneControl {
                     }
                     else -> error(Response.Status.NOT_FOUND, "not found")
                 }
+            } catch (e: CainiaoServiceException) {
+                notifyUi()
+                json(JSONObject().put("ok", false).put("errorCode", "CAINIAO_${e.kind.name}")
+                    .put("error", e.kind.message).put("identity", status().getJSONObject("identity")),
+                    if (e.kind in setOf(CainiaoServiceException.Kind.LOGIN_EXPIRED, CainiaoServiceException.Kind.NO_SESSION))
+                        Response.Status.CONFLICT else Response.Status.SERVICE_UNAVAILABLE)
             } catch (_: Exception) {
                 // Parser exceptions can embed the entire secret JSON input. Never log them.
                 error(Response.Status.BAD_REQUEST, "操作失败；请检查请求、材料和登录状态，已有有效材料仍保留")
@@ -146,8 +159,15 @@ object PhoneControl {
                 val m = CainiaoIdentity.parse(s.getJSONObject("material"))
                 identity.put("materialExpiresAtMs", m.expiresAtMs).put("periodSeconds", m.periodSeconds)
                     .put("lastRefreshedAtMs", s.optLong("lastRefreshedAtMs"))
-                if (m.expiresAtMs > System.currentTimeMillis()) {
-                    identity.put("available", true).put("codeLength", CainiaoIdentity.generate(m).length)
+                val snapshot = CainiaoRenewal.snapshot(ctx)
+                identity.put("lastRefreshAttemptAtMs", snapshot.lastAttemptAtMs)
+                    .put("refreshErrorCode", snapshot.error?.let { "CAINIAO_${it.name}" }.orEmpty())
+                    .put("refreshError", snapshot.error?.message.orEmpty())
+                    .put("needsLogin", snapshot.error in setOf(CainiaoServiceException.Kind.LOGIN_EXPIRED, CainiaoServiceException.Kind.NO_SESSION))
+                val shown = CainiaoIdentity.display(m, snapshot.online)
+                if (shown != null) {
+                    identity.put("available", true).put("codeLength", shown.value.length)
+                        .put("source", if (shown.online) "online" else "offline").put("nextChangeAtMs", shown.expiresAtMs)
                 }
             }
             return result.put("identity", identity)
