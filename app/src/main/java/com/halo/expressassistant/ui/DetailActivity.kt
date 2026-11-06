@@ -10,11 +10,11 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.halo.expressassistant.data.ParcelState
 import coil.load
 import coil.transform.CircleCropTransformation
 import com.google.android.material.card.MaterialCardView
@@ -22,7 +22,6 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import com.halo.expressassistant.R
 import com.halo.expressassistant.api.KuaiDi100
-import com.halo.expressassistant.api.EtaParser
 import com.halo.expressassistant.api.XiaomiDetail
 import com.halo.expressassistant.data.ExpressDetail
 import com.halo.expressassistant.data.ExpressItem
@@ -33,10 +32,14 @@ import com.halo.expressassistant.data.displayProgress
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.decodeFromString
 
 class DetailActivity : AppCompatActivity() {
+    private lateinit var binding: ActivityDetailBinding
     private var displayedItem: ExpressItem? = null
+    private var displayedDetail: ExpressDetail? = null
+    private var detailError: String? = null
     private var headerProgressText: TextView? = null
     private var sourceCookies: String = ""
     private var sourceAccountId: String = ""
@@ -49,7 +52,7 @@ class DetailActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         Themes.apply(this)
         super.onCreate(savedInstanceState)
-        val binding = ActivityDetailBinding.inflate(layoutInflater)
+        binding = ActivityDetailBinding.inflate(layoutInflater)
         setContentView(binding.root)
         EdgeToEdge.apply(this, binding.root)
         Paper.apply(this, binding.root, binding.toolbar)
@@ -96,11 +99,11 @@ class DetailActivity : AppCompatActivity() {
             (traceView as? TextView)?.setTextColor(
                 MaterialColors.getColor(this@DetailActivity, com.google.android.material.R.attr.colorOnPrimary, Color.WHITE)
             )
-            traceView.setOnClickListener { onTraceClicked(item) }
+            traceView.setOnClickListener { displayedItem?.let(::onTraceClicked) }
         } else {
             binding.toolbar.setOnMenuItemClickListener { mi ->
                 if (mi.itemId == R.id.action_trace) {
-                    onTraceClicked(item)
+                    displayedItem?.let(::onTraceClicked)
                     true
                 } else {
                     false
@@ -222,62 +225,42 @@ class DetailActivity : AppCompatActivity() {
                 if (detail.data.isEmpty() && Store.kd100Fallback(this@DetailActivity) && item.source == "xiaomi") {
                     detail = KuaiDi100.fetchDetail(this@DetailActivity, item)
                 }
-                // Cached and newly fetched traces share receipt reconciliation before rendering the header.
                 val current = Store.items(this@DetailActivity).firstOrNull { it.mailNo == item.mailNo } ?: item
-                item = ParcelState.withTrace(current, detail.data)
-                if (item != current) Store.saveItems(this@DetailActivity, Store.items(this@DetailActivity).map {
-                    if (it.mailNo == item.mailNo) item else it
-                })
-                detail = detail.copy(state = item.state, isReceived = item.isCompleted())
+                val reconciled = DetailState.reconcile(current, detail)
+                if (reconciled != current) {
+                    Store.saveItems(this@DetailActivity, Store.items(this@DetailActivity).map {
+                        if (it.mailNo == reconciled.mailNo) reconciled else it
+                    })
+                }
+                // Store may normalize receipt evidence; the saved snapshot is also the display baseline.
+                item = Store.items(this@DetailActivity).firstOrNull { it.mailNo == item.mailNo } ?: reconciled
                 displayedItem = item
-                // 详情抓到真实轨迹 → 双写回卡片外显（京东/淘宝完成单列表只给「完成」占位）
-                if ((item.source == "jd" || item.source == "taobao") && detail.data.isNotEmpty()) {
-                    val last = detail.data.last()
-                    val statusOnly = setOf("完成", "已完成", "交易成功", "已签收", "已送达", "签收", "送达")
-                    if (last.context.isNotBlank() && last.context !in statusOnly) {
-                        val items = Store.items(this@DetailActivity).map {
-                            if (it.mailNo == item.mailNo) {
-                                it.copy(
-                                    latestText = last.context.take(220),
-                                    latestTime = last.time.ifBlank { it.latestTime }
-                                )
-                            } else it
-                        }
-                        Store.saveItems(this@DetailActivity, items)
-                    }
-                }
-                binding.container.removeAllViews()
-                // 从完整轨迹解析取件码（列表文本里可能没有）
-                if (!item.isCompleted() && item.pickupCode.isBlank()) {
-                    val code = GoodsPresentation.pickupCodeFromParts(
-                        detail.data.map { it.context } + item.latestText
-                    )
-                    if (!code.isNullOrBlank()) {
-                        val items = Store.items(this@DetailActivity).map {
-                            if (it.mailNo == item.mailNo) it.copy(pickupCode = code) else it
-                        }
-                        Store.saveItems(this@DetailActivity, items)
-                    }
-                }
-                addHeader(binding.container, item)
-                if (detail.data.isEmpty()) {
-                    binding.container.addView(text("暂无物流轨迹"))
-                } else {
-                    addTimeline(binding.container, detail)
-                    val eta = EtaParser.extract(detail.data.joinToString(" ") { it.context })
-                    if (eta.isNotBlank() && eta != item.eta) {
-                        val items = Store.items(this@DetailActivity).map {
-                            if (it.mailNo == item.mailNo) it.copy(eta = eta) else it
-                        }
-                        Store.saveItems(this@DetailActivity, items)
-                    }
-
-                }
+                displayedDetail = detail.copy(state = item.state, isReceived = item.isCompleted())
+                renderDetail()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
-                binding.container.removeAllViews()
-                binding.container.addView(text("加载失败：${e.message}"))
+                detailError = "加载失败：${e.message}"
+                renderDetail()
             }
         }
+    }
+
+    private fun renderDetail() {
+        val item = displayedItem ?: return
+        val scroll = binding.container.parent as? ScrollView
+        val previousY = scroll?.scrollY ?: 0
+        binding.toolbar.menu.findItem(R.id.action_trace)?.isVisible = !item.orderOnly
+        binding.container.removeAllViews()
+        addHeader(binding.container, item)
+        val detail = displayedDetail
+        when {
+            detailError != null -> binding.container.addView(text(detailError!!))
+            detail == null -> binding.container.addView(text("正在加载物流轨迹…"))
+            detail.data.isEmpty() -> binding.container.addView(text("暂无物流轨迹"))
+            else -> addTimeline(binding.container, detail)
+        }
+        scroll?.post { scroll.scrollTo(0, previousY) }
     }
 
     private fun addHeader(container: LinearLayout, item: ExpressItem) {
@@ -560,7 +543,11 @@ class DetailActivity : AppCompatActivity() {
     fun reloadFromStore() {
         val shown = displayedItem ?: return
         val current = Store.items(this).firstOrNull { it.mailNo == shown.mailNo } ?: return
-        if (current != shown && !isFinishing) recreate()
+        if (current != shown && !isFinishing && !isDestroyed) {
+            displayedItem = current
+            displayedDetail = displayedDetail?.copy(state = current.state, isReceived = current.isCompleted())
+            renderDetail()
+        }
     }
 
     override fun onResume() {
