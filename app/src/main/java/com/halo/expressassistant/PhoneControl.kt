@@ -2,10 +2,10 @@ package com.halo.expressassistant
 
 import android.content.Context
 import com.halo.expressassistant.api.CainiaoIdentity
+import com.halo.expressassistant.api.CainiaoMember
 import com.halo.expressassistant.api.CainiaoRenewal
 import com.halo.expressassistant.api.CainiaoServiceException
 import com.halo.expressassistant.data.CainiaoSessionStore
-import com.halo.expressassistant.data.PhoneProvisioning
 import com.halo.expressassistant.data.Store
 import com.halo.expressassistant.ui.SyncEngine
 import com.halo.expressassistant.ui.UpdateChecker
@@ -74,7 +74,8 @@ object PhoneControl {
                     path == "/api/status" && session.method == Method.GET -> json(status())
                     path == "/api/setup" && session.method == Method.POST -> {
                         if (busy.get()) return error(Response.Status.CONFLICT, "sync running; retry after completion")
-                        val message = PhoneProvisioning.import(ctx, body(session))
+                        val raw = body(session)
+                        val message = runBlocking { CainiaoRenewal.importConfiguration(ctx, raw) }
                         notifyUi()
                         json(status().put("message", message))
                     }
@@ -86,6 +87,11 @@ object PhoneControl {
                     }
                     path == "/api/identity/online/refresh" && session.method == Method.POST -> {
                         runBlocking { CainiaoRenewal.online(ctx, force = true) }
+                        notifyUi()
+                        json(status())
+                    }
+                    path == "/api/session/refresh" && session.method == Method.POST -> {
+                        runBlocking { CainiaoRenewal.renewSession(ctx) }
                         notifyUi()
                         json(status())
                     }
@@ -118,7 +124,8 @@ object PhoneControl {
                 notifyUi()
                 json(JSONObject().put("ok", false).put("errorCode", "CAINIAO_${e.kind.name}")
                     .put("error", e.kind.message).put("identity", status().getJSONObject("identity")),
-                    if (e.kind in setOf(CainiaoServiceException.Kind.LOGIN_EXPIRED, CainiaoServiceException.Kind.NO_SESSION))
+                    if (e.kind in setOf(CainiaoServiceException.Kind.LOGIN_EXPIRED, CainiaoServiceException.Kind.NO_SESSION,
+                            CainiaoServiceException.Kind.AUTO_RENEW_NOT_CONFIGURED))
                         Response.Status.CONFLICT else Response.Status.SERVICE_UNAVAILABLE)
             } catch (_: Exception) {
                 // Parser exceptions can embed the entire secret JSON input. Never log them.
@@ -161,9 +168,15 @@ object PhoneControl {
                     .put("lastRefreshedAtMs", s.optLong("lastRefreshedAtMs"))
                 val snapshot = CainiaoRenewal.snapshot(ctx)
                 identity.put("lastRefreshAttemptAtMs", snapshot.lastAttemptAtMs)
+                    .put("autoRenewConfigured", s.optJSONObject("member") != null && s.optJSONObject("native") != null)
+                    .put("canAutoRenew", snapshot.canAutoRenew)
+                    .put("sessionExpiresAtMs", s.optJSONObject("member")?.let { CainiaoMember.sessionExpiresAt(it) } ?: 0)
+                    .put("refreshTokenExpiresAtMs", s.optJSONObject("member")?.let { CainiaoMember.refreshExpiresAt(it) } ?: 0)
+                    .put("lastSessionRenewedAtMs", s.optLong("lastSessionRenewedAtMs"))
+                    .put("lastSessionRenewAttemptAtMs", s.optLong("lastSessionRenewAttemptAtMs"))
                     .put("refreshErrorCode", snapshot.error?.let { "CAINIAO_${it.name}" }.orEmpty())
                     .put("refreshError", snapshot.error?.message.orEmpty())
-                    .put("needsLogin", snapshot.error in setOf(CainiaoServiceException.Kind.LOGIN_EXPIRED, CainiaoServiceException.Kind.NO_SESSION))
+                    .put("needsLogin", s.optBoolean("memberNeedsLogin") || snapshot.error in setOf(CainiaoServiceException.Kind.LOGIN_EXPIRED, CainiaoServiceException.Kind.NO_SESSION) && !snapshot.canAutoRenew)
                 val shown = CainiaoIdentity.display(m, snapshot.online)
                 if (shown != null) {
                     identity.put("available", true).put("codeLength", shown.value.length)

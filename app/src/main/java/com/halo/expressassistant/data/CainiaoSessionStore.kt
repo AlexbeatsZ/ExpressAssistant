@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import com.halo.expressassistant.api.CainiaoIdentity
+import com.halo.expressassistant.api.CainiaoMember
 import org.json.JSONObject
 import java.io.File
 import java.security.KeyStore
@@ -38,6 +39,8 @@ object CainiaoSessionStore {
     @Synchronized fun save(ctx: Context, session: JSONObject) {
         require(session.getString("cookie").isNotBlank()) { "缺少菜鸟登录态" }
         CainiaoIdentity.parse(session.getJSONObject("material"))
+        session.optJSONObject("member")?.let { CainiaoMember.validate(it) }
+        session.optJSONObject("native")?.let { CainiaoMember.validateNative(it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val data = byteArrayOf(1) + cipher.iv + cipher.doFinal(session.toString().toByteArray(Charsets.UTF_8))

@@ -68,7 +68,7 @@ class IdentityPanel(private val activity: AppCompatActivity) {
         ticker = activity.lifecycleScope.launch {
             while (visible) {
                 render()
-                if (state.material != null && state.error != CainiaoServiceException.Kind.LOGIN_EXPIRED &&
+                if (state.material != null && (state.error != CainiaoServiceException.Kind.LOGIN_EXPIRED || state.canAutoRenew) &&
                     (state.online?.expiresAtMs ?: 0) <= System.currentTimeMillis() &&
                     System.currentTimeMillis() - state.lastAttemptAtMs >= 60_000) update(false)
                 delay(1000)
@@ -92,7 +92,7 @@ class IdentityPanel(private val activity: AppCompatActivity) {
 
     private fun update(force: Boolean) {
         if (!refresh.isEnabled) return
-        if (!force && state.error == CainiaoServiceException.Kind.LOGIN_EXPIRED) return
+        if (!force && state.error == CainiaoServiceException.Kind.LOGIN_EXPIRED && !state.canAutoRenew) return
         refresh.isEnabled = false
         if (force) refresh.text = "刷新中"
         activity.lifecycleScope.launch {

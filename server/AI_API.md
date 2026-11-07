@@ -258,6 +258,7 @@ curl --fail-with-body -sS -H "Authorization: Bearer $EXPRESS_PHONE_API_TOKEN" \
 | GET | `/api/sync` | 手机同步 running、finishedAt、statuses、total；逐项检查 error |
 | POST | `/api/identity/refresh` | 使用本人菜鸟会话更新离线材料；返回状态元数据 |
 | POST | `/api/identity/online/refresh` | 请求在线身份码并加密缓存；仅返回状态元数据 |
+| POST | `/api/session/refresh` | 使用已配置会员refreshToken续登，保存轮换凭证和Cookie；仅返回状态元数据 |
 
 手机维护接口不导出身份码原文、密钥或 Cookie。身份码在手机界面显示条形码。POST setup 格式如下（只有结构示意，所有凭证要替换为本人真实材料）：
 
@@ -352,3 +353,33 @@ GET /api/status 的 identity 增加以下元数据，不含实际身份码：
 ### v0.9.4 详情页稳定性
 
 手机修复商品详情重复回写数据、onResume反复重建页面造成的闪烁。四类真实已发货/未发货/已完成详情已实机验证稳定，原有API路径和鉴权不变。手机状态接口version为0.9.4；快递、平台账号和菜鸟身份会话保留。
+
+### v0.9.6 手机会员自动续登
+
+长期使用需要会员续登凭证，Cookie和15天离线材料本身不能维持长期登录。已有手机会话可用`POST /api/setup`只补充以下内容；这里只展示结构，所有值均为占位符：
+
+```json
+{
+  "schema": 1,
+  "cainiaoMember": {
+    "sessionId": "本人会员会话",
+    "refreshToken": "本人续登凭证",
+    "cnAccountId": "1234567890",
+    "tenantId": 78,
+    "sessionIdExpired": "2000000000000",
+    "refreshTokenExpired": "2002505600000"
+  },
+  "cainiaoNative": {
+    "utdid": "本人原设备标识",
+    "ttid": "本人原客户端标识"
+  }
+}
+```
+
+此导入保留现有Cookie、身份材料、快递及其他平台账号。也可在完整`cainiao`对象内提供`member`和`native`。这些字段只写入加密存储，不通过状态API导出。仅有会员凭证且尚未初始化身份会话时应先完成原有初始化。
+
+客户端每12小时同时检查会员与材料；会员剩余不足13小时主动续登，身份码接口报告登录失效时先续登并仅重试一次。网络失败保留现有有效材料，明确拒绝后要求重新认证。`POST /api/session/refresh`可主动验证会员续登，自动流程无需AI/电脑触发。
+
+状态增加`autoRenewConfigured`、`canAutoRenew`、`sessionExpiresAtMs`、`refreshTokenExpiresAtMs`、`lastSessionRenewedAtMs`、`lastSessionRenewAttemptAtMs`。不返回账号ID、会员Token、Cookie、签名或设备标识。`CAINIAO_AUTO_RENEW_NOT_CONFIGURED`返回409；`CAINIAO_AUTH_RUNTIME_UNAVAILABLE`返回503并保留有效缓存。
+
+当前签名运行时来自手机已安装且证书匹配的官方菜鸟8.11.1023，需保留安装。快递助手使用自己的进程和存储，不启动官方App，不依赖ADB常连；发布包不附带官方SDK或任何本人凭证。独立手机号首次登录、跨30天持续运行和真实驿站扫码仍需单独验收，不能由一次续登成功推定永久免登录。

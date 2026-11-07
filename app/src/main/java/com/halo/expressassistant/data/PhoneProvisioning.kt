@@ -2,6 +2,7 @@ package com.halo.expressassistant.data
 
 import android.content.Context
 import com.halo.expressassistant.api.CainiaoIdentity
+import com.halo.expressassistant.api.CainiaoMember
 import kotlinx.serialization.decodeFromString
 import org.json.JSONObject
 
@@ -11,11 +12,29 @@ object PhoneProvisioning {
         require(raw.length <= 4_000_000) { "初始化文件过大" }
         val root = JSONObject(raw)
         require(root.getInt("schema") == 1) { "不支持的初始化文件版本" }
-        val session = root.optJSONObject("cainiao")
+        val fullSession = root.optJSONObject("cainiao")
+        val member = root.optJSONObject("cainiaoMember")
+        val native = root.optJSONObject("cainiaoNative")
+        val session = if (member != null || native != null) {
+            val current = fullSession ?: CainiaoSessionStore.read(ctx) ?: error("请先导入菜鸟身份会话")
+            val merged = JSONObject(current.toString())
+            if (member != null) {
+                CainiaoMember.validate(member)
+                require(CainiaoMember.canRenew(member)) { "菜鸟续登凭证已过期" }
+                if (fullSession == null) current.optJSONObject("member")?.let {
+                    require(it.optString("cnAccountId") == member.optString("cnAccountId")) { "菜鸟续登账号不匹配" }
+                }
+                merged.put("member", member).put("memberNeedsLogin", false).put("lastSessionRenewError", "")
+                    .put("lastRefreshError", "")
+            }
+            if (native != null) { CainiaoMember.validateNative(native); merged.put("native", native) }
+            merged
+        } else fullSession
         if (session != null) {
             require(session.getString("cookie").isNotBlank()) { "缺少菜鸟登录态" }
             val material = CainiaoIdentity.parse(session.getJSONObject("material"))
-            require(material.expiresAtMs > System.currentTimeMillis()) { "导入材料已到期" }
+            // A member-only repair must still work after the existing material cache expires.
+            if (fullSession != null) require(material.expiresAtMs > System.currentTimeMillis()) { "导入材料已到期" }
         }
         val accounts = root.optJSONObject("accounts")
         val decoded = Store.CHANNELS.associateWith { ch ->
