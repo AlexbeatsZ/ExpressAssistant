@@ -55,7 +55,6 @@ class DetailActivity : AppCompatActivity() {
         binding = ActivityDetailBinding.inflate(layoutInflater)
         setContentView(binding.root)
         EdgeToEdge.apply(this, binding.root)
-        Paper.apply(this, binding.root, binding.toolbar)
         binding.toolbar.setNavigationOnClickListener { finish() }
         val rawItem = intent.getStringExtra("item")
         val mailNo = intent.getStringExtra("mailNo")
@@ -273,7 +272,6 @@ class DetailActivity : AppCompatActivity() {
             cardElevation = 0f
             setCardBackgroundColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.colorBackground, Color.TRANSPARENT))
         }
-        Paper.styleCard(this, card)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }

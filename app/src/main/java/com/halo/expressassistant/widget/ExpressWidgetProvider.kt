@@ -20,7 +20,6 @@ import com.halo.expressassistant.data.sectionKeyOf
 import com.halo.expressassistant.ui.DetailActivity
 import com.halo.expressassistant.ui.MainActivity
 import com.halo.expressassistant.ui.SyncEngine
-import com.halo.expressassistant.ui.Themes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -154,7 +153,6 @@ class ExpressWidgetProvider : AppWidgetProvider() {
             val large = width >= 300 && height >= 250
             val medium = width >= 300
 
-            val lark = Store.theme(context) == Themes.LARK || Store.colorScheme(context) == "warm"
             val allItems = Store.items(context)
             val items = allItems.filter {
                 when (sectionKeyOf(it)) {
@@ -181,19 +179,13 @@ class ExpressWidgetProvider : AppWidgetProvider() {
                 val showTime = rowDp >= ROW_DP_MIN_3LINE
                 val views = RemoteViews(
                     context.packageName,
-                    when {
-                        compact && lark -> R.layout.widget_express_list_lark_compact
-                        compact -> R.layout.widget_express_list_compact
-                        lark -> R.layout.widget_express_list_lark
-                        else -> R.layout.widget_express_list
-                    }
+                    if (compact) R.layout.widget_express_list_compact else R.layout.widget_express_list
                 )
                 Log.d(
                     "WidgetDebug",
                     "RENDER id=$id large=$large all=${allItems.size} items=${items.size} " +
                         "grid=${gridCols}x${gridRows} cap=$cap rowDp=$rowDp " +
-                        "compact=$compact showTime=$showTime " +
-                        "themes=${Store.theme(context)}/${Store.colorScheme(context)}"
+                        "compact=$compact showTime=$showTime"
                 )
                 // 可见性必须"显式发全套"（VISIBLE/GONE 都发）：桌面 updateAppWidget 命中同一 layout 时走
                 // reapply（复用旧视图树），只发 VISIBLE 不发 GONE 会残留上一次的格子——件数变少时
@@ -242,7 +234,7 @@ class ExpressWidgetProvider : AppWidgetProvider() {
             } else {
                 val views = RemoteViews(
                     context.packageName,
-                    if (lark) R.layout.widget_express_small_lark else R.layout.widget_express_small
+                    R.layout.widget_express_small
                 )
                 val counts = countsOf(items)
                 views.setTextViewText(R.id.widget_small_summary, smallSummary(items, counts))

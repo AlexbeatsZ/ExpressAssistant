@@ -64,7 +64,6 @@ import kotlin.math.max
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var adapter: ExpressAdapter
-    private var appliedTheme: String = ""
 
 
     private lateinit var identityPanel: IdentityPanel
@@ -76,12 +75,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         Themes.apply(this)
-        appliedTheme = Themes.current(this)
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         EdgeToEdge.apply(this, binding.root)
-        Paper.apply(this, binding.root, binding.toolbar)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3001)
         adapter = ExpressAdapter(onClick = { openDetail(it) }, onLongClick = { showPackageSheet(it) })
         binding.list.layoutManager = LinearLayoutManager(this)
@@ -177,7 +174,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (appliedTheme != Themes.current(this)) { recreate(); return }
         reload()
         if (selectedTab == com.halo.expressassistant.R.id.nav_identity) identityPanel.show()
         com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(this)

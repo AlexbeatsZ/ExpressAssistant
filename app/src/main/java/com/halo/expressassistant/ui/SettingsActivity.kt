@@ -15,12 +15,10 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.pm.PackageInfoCompat
-import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -52,10 +50,8 @@ class SettingsActivity : AppCompatActivity() {
         binding = ActivitySettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
         EdgeToEdge.apply(this, binding.root)
-        Paper.apply(this, binding.root, binding.toolbar)
         binding.toolbar.setNavigationOnClickListener { finish() }
 
-        binding.rowTheme.setOnClickListener { showThemeSheet() }
         binding.rowAddress.setOnClickListener { showAddressSheet() }
         binding.rowXiaomiLogin.setOnClickListener { showXiaomiSheet() }
         binding.rowJdLogin.setOnClickListener { showJdSheet() }
@@ -77,7 +73,6 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun refreshButtons() {
-        binding.themeSummary.text = themeLabel()
         binding.xiaomiLoginSummary.text = accountSummary(Store.CH_XIAOMI, "小米")
         binding.jdLoginSummary.text = accountSummary(Store.CH_JD, "京东")
         binding.tbLoginSummary.text = accountSummary(Store.CH_TAOBAO, "淘宝")
@@ -124,20 +119,6 @@ class SettingsActivity : AppCompatActivity() {
         return "已绑定 ${list.size} 个 · ${first.label.take(16)}$tail"
     }
 
-    private fun themeLabel(): String = when (Store.theme(this)) {
-        Themes.MONET -> "莫奈取色"
-        Themes.CUSTOM -> {
-            if (Store.customSeparate(this)) {
-                "自定义 · 分昼夜设置"
-            } else {
-                val color = if (Store.colorScheme(this) == "monet") "莫奈" else "温暖"
-                val font = if (Store.themeFont(this) == Themes.FONT_SERIF) "衬线" else "无衬线"
-                "自定义 · $color / $font / 纸感 ${Store.paperIntensity(this)}%"
-            }
-        }
-        else -> "温暖纸感"
-    }
-
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == requestXiaomi || requestCode == requestJd || requestCode == requestTb || requestCode == requestPdd) {
@@ -145,197 +126,6 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-
-    /* ─────────────── 主题外观 ─────────────── */
-
-    private fun showThemeSheet() {
-        val (sheet, container) = Sheets.create(this, "主题外观", "选择主题，或在自定义里自由混搭元素")
-        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        container.addView(body)
-        var changed = false
-        sheet.setOnDismissListener {
-            if (changed) recreate()
-        }
-        renderThemeBody(sheet, body) { changed = true }
-        sheet.show()
-    }
-
-    private fun renderThemeBody(
-        sheet: BottomSheetDialog,
-        body: LinearLayout,
-        markChanged: () -> Unit = {}
-    ) {
-        body.removeAllViews()
-        val theme = Store.theme(this)
-        body.addView(
-            Sheets.optionRow(this, "莫奈取色", "跟随系统壁纸 · 无衬线 · 无纸纹", theme == Themes.MONET) {
-                Store.saveTheme(this@SettingsActivity, Themes.MONET)
-                Store.saveColorScheme(this@SettingsActivity, "monet")
-                Store.saveThemeFont(this@SettingsActivity, Themes.FONT_SANS)
-                Store.savePaperIntensity(this@SettingsActivity, 0)
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        body.addView(
-            Sheets.optionRow(this, "温暖纸感", "温暖配色 · 衬线 · 纸纹", theme == Themes.LARK) {
-                Store.saveTheme(this@SettingsActivity, Themes.LARK)
-                Store.saveColorScheme(this@SettingsActivity, "warm")
-                Store.saveThemeFont(this@SettingsActivity, Themes.FONT_SERIF)
-                Store.savePaperIntensity(this@SettingsActivity, 100)
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        body.addView(
-            Sheets.optionRow(this, "自定义", "混搭莫奈 / 温暖、衬线 / 无衬线、纸感", theme == Themes.CUSTOM) {
-                Store.saveTheme(this@SettingsActivity, Themes.CUSTOM)
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        if (theme == Themes.CUSTOM) {
-            renderCustomTheme(sheet, body, markChanged)
-        }
-    }
-
-    private fun renderCustomTheme(
-        sheet: BottomSheetDialog,
-        body: LinearLayout,
-        markChanged: () -> Unit
-    ) {
-        body.addView(Sheets.sectionTitle(this, "昼夜设置"))
-        body.addView(
-            Sheets.optionRow(this, "白天 / 黑夜分别设置", "开启后可为白天和夜晚分别搭配", Store.customSeparate(this)) {
-                Store.saveCustomSeparate(
-                    this@SettingsActivity,
-                    !Store.customSeparate(this@SettingsActivity)
-                )
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        if (Store.customSeparate(this)) {
-            renderThemeMode(sheet, body, markChanged, "白天", true)
-            renderThemeMode(sheet, body, markChanged, "夜间", false)
-        } else {
-            renderThemeMode(sheet, body, markChanged, null, null)
-        }
-    }
-
-    private fun renderThemeMode(
-        sheet: BottomSheetDialog,
-        body: LinearLayout,
-        markChanged: () -> Unit,
-        label: String?,
-        isDay: Boolean?
-    ) {
-        if (label != null) {
-            body.addView(Sheets.sectionTitle(this, label))
-        }
-        val color = when (isDay) {
-            true -> Store.colorSchemeDay(this)
-            false -> Store.colorSchemeNight(this)
-            null -> Store.colorScheme(this)
-        }
-        val font = when (isDay) {
-            true -> Store.themeFontDay(this)
-            false -> Store.themeFontNight(this)
-            null -> Store.themeFont(this)
-        }
-        val paper = when (isDay) {
-            true -> Store.paperIntensityDay(this)
-            false -> Store.paperIntensityNight(this)
-            null -> Store.paperIntensity(this)
-        }
-
-        body.addView(
-            Sheets.optionRow(this, "配色 · 莫奈取色", null, color == "monet") {
-                when (isDay) {
-                    true -> Store.saveColorSchemeDay(this@SettingsActivity, "monet")
-                    false -> Store.saveColorSchemeNight(this@SettingsActivity, "monet")
-                    null -> Store.saveColorScheme(this@SettingsActivity, "monet")
-                }
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        body.addView(
-            Sheets.optionRow(this, "配色 · 温暖", null, color == "warm") {
-                when (isDay) {
-                    true -> Store.saveColorSchemeDay(this@SettingsActivity, "warm")
-                    false -> Store.saveColorSchemeNight(this@SettingsActivity, "warm")
-                    null -> Store.saveColorScheme(this@SettingsActivity, "warm")
-                }
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        body.addView(
-            Sheets.optionRow(this, "字体 · 衬线", null, font == Themes.FONT_SERIF) {
-                when (isDay) {
-                    true -> Store.saveThemeFontDay(this@SettingsActivity, Themes.FONT_SERIF)
-                    false -> Store.saveThemeFontNight(this@SettingsActivity, Themes.FONT_SERIF)
-                    null -> Store.saveThemeFont(this@SettingsActivity, Themes.FONT_SERIF)
-                }
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        body.addView(
-            Sheets.optionRow(this, "字体 · 无衬线", null, font == Themes.FONT_SANS) {
-                when (isDay) {
-                    true -> Store.saveThemeFontDay(this@SettingsActivity, Themes.FONT_SANS)
-                    false -> Store.saveThemeFontNight(this@SettingsActivity, Themes.FONT_SANS)
-                    null -> Store.saveThemeFont(this@SettingsActivity, Themes.FONT_SANS)
-                }
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-
-        body.addView(Sheets.sectionTitle(this, "纸感强度"))
-        val valueText = TextView(this).apply {
-            text = "$paper%"
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(MaterialColors.getColor(this@SettingsActivity, android.R.attr.colorPrimary, 0))
-            gravity = Gravity.END
-        }
-        body.addView(valueText)
-        body.addView(
-            SeekBar(this).apply {
-                max = 200
-                progress = paper
-                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                        if (!fromUser) return
-                        when (isDay) {
-                            true -> Store.savePaperIntensityDay(this@SettingsActivity, progress)
-                            false -> Store.savePaperIntensityNight(this@SettingsActivity, progress)
-                            null -> Store.savePaperIntensity(this@SettingsActivity, progress)
-                        }
-                        valueText.text = "$progress%"
-                        markChanged()
-                        Paper.apply(this@SettingsActivity, binding.root, binding.toolbar)
-                        refreshButtons()
-                    }
-
-                    override fun onStartTrackingTouch(seekBar: SeekBar) {}
-
-                    override fun onStopTrackingTouch(seekBar: SeekBar) {}
-                })
-            }
-        )
-        body.addView(
-            TextView(this).apply {
-                text = "0 为关闭纸纹"
-                textSize = 12f
-                setTextColor(onSurfaceVariant())
-                setPadding(0, 2, 0, 0)
-            }
-        )
-    }
 
     /* ─────────────── 小组件 ─────────────── */
 

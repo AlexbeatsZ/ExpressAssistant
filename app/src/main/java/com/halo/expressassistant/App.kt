@@ -14,6 +14,9 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        if (com.halo.expressassistant.data.Store.clearLegacyThemePreferences(this)) {
+            com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(this)
+        }
         PhoneControl.start(this)
         // 15 分钟为 WorkManager 周期下限；Worker 内部按设置（默认关闭 / 用户自定分钟）决定是否执行
         val request = PeriodicWorkRequestBuilder<TrackingWorker>(15, TimeUnit.MINUTES)
@@ -43,10 +46,7 @@ class App : Application() {
 
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
 
-            /** 衬线主题下补字体：系统 serif 覆盖不了中文的 ROM 才会真的动视图，常见机型是 no-op */
-            override fun onActivityStarted(activity: Activity) {
-                com.halo.expressassistant.ui.SerifFont.applyIfNeeded(activity)
-            }
+            override fun onActivityStarted(activity: Activity) {}
 
             override fun onActivityStopped(activity: Activity) {}
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}

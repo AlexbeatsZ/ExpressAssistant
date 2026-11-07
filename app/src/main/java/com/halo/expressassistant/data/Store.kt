@@ -28,17 +28,6 @@ object Store {
     private const val KEY_WIDGET_SHOW_DELIVERING = "widget_show_delivering"
     private const val KEY_WIDGET_SHOW_SHIPPED = "widget_show_shipped"
     private const val KEY_WIDGET_SHOW_NOTSHIPPED = "widget_show_notshipped"
-    private const val KEY_THEME = "theme"
-    private const val KEY_THEME_COLOR = "theme_color"
-    private const val KEY_THEME_FONT = "theme_font"
-    private const val KEY_THEME_COLOR_DAY = "theme_color_day"
-    private const val KEY_THEME_COLOR_NIGHT = "theme_color_night"
-    private const val KEY_THEME_FONT_DAY = "theme_font_day"
-    private const val KEY_THEME_FONT_NIGHT = "theme_font_night"
-    private const val KEY_PAPER_DAY = "paper_intensity_day"
-    private const val KEY_PAPER_NIGHT = "paper_intensity_night"
-    private const val KEY_CUSTOM_SEPARATE = "custom_separate"
-    private const val KEY_PAPER_INTENSITY = "paper_intensity"
     private const val KEY_JD_COOKIES = "jd_cookies"
     private const val KEY_JD_GOODS = "jd_goods"
     private const val KEY_TB_COOKIES = "tb_cookies"
@@ -803,180 +792,17 @@ object Store {
         prefs.edit().putString(KEY_TB_TRACES, json.encodeToString(trimmed)).commit()
     }
 
-    /**
-     * 主题。默认 **lark（温暖纸感 · 衬线）**——纸感衬线是云雀的主打视觉身份，
-     * 新装用户第一眼就该看到它（配色默认 warm、字体默认 serif，与之一致）。
-     * 想要跟随系统壁纸取色的用户在设置里切「莫奈取色」。
-     */
-    fun theme(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME, "lark") ?: "lark"
-
-    fun saveTheme(context: Context, theme: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME, theme)
-        }
-        com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(context)
-    }
-
-    fun colorScheme(context: Context): String =
-        if (customSeparate(context)) {
-            if (isNight(context)) colorSchemeNight(context) else colorSchemeDay(context)
-        } else {
-            colorSchemeCombined(context)
-        }
-
-    fun saveColorScheme(context: Context, scheme: String) {
-        if (customSeparate(context)) {
-            if (isNight(context)) saveColorSchemeNight(context, scheme) else saveColorSchemeDay(context, scheme)
-        } else {
-            saveColorSchemeCombined(context, scheme)
-        }
-    }
-
-    private fun colorSchemeCombined(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME_COLOR, "warm") ?: "warm"
-
-    fun colorSchemeDay(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME_COLOR_DAY, null) ?: colorSchemeCombined(context)
-
-    fun colorSchemeNight(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME_COLOR_NIGHT, null) ?: colorSchemeCombined(context)
-
-    fun saveColorSchemeDay(context: Context, scheme: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME_COLOR_DAY, scheme)
-        }
-    }
-
-    fun saveColorSchemeNight(context: Context, scheme: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME_COLOR_NIGHT, scheme)
-        }
-    }
-
-    private fun saveColorSchemeCombined(context: Context, scheme: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME_COLOR, scheme)
-        }
-    }
-
-    fun themeFont(context: Context): String =
-        if (customSeparate(context)) {
-            if (isNight(context)) themeFontNight(context) else themeFontDay(context)
-        } else {
-            themeFontCombined(context)
-        }
-
-    fun saveThemeFont(context: Context, font: String) {
-        if (customSeparate(context)) {
-            if (isNight(context)) saveThemeFontNight(context, font) else saveThemeFontDay(context, font)
-        } else {
-            saveThemeFontCombined(context, font)
-        }
-    }
-
-    private fun themeFontCombined(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME_FONT, "serif") ?: "serif"
-
-    fun themeFontDay(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME_FONT_DAY, null) ?: themeFontCombined(context)
-
-    fun themeFontNight(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME_FONT_NIGHT, null) ?: themeFontCombined(context)
-
-    fun saveThemeFontDay(context: Context, font: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME_FONT_DAY, font)
-        }
-    }
-
-    fun saveThemeFontNight(context: Context, font: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME_FONT_NIGHT, font)
-        }
-    }
-
-    private fun saveThemeFontCombined(context: Context, font: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME_FONT, font)
-        }
-    }
-
-    fun customSeparate(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_CUSTOM_SEPARATE, false)
-
-    fun saveCustomSeparate(context: Context, separate: Boolean) {
-        val e = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-        if (separate) {
-            if (!customSeparate(context)) {
-                val color = colorSchemeCombined(context)
-                val font = themeFontCombined(context)
-                val paper = paperIntensityCombined(context)
-                e.putString(KEY_THEME_COLOR_DAY, color)
-                e.putString(KEY_THEME_COLOR_NIGHT, color)
-                e.putString(KEY_THEME_FONT_DAY, font)
-                e.putString(KEY_THEME_FONT_NIGHT, font)
-                e.putInt(KEY_PAPER_DAY, paper)
-                e.putInt(KEY_PAPER_NIGHT, paper)
-            }
-        } else {
-            e.putString(KEY_THEME_COLOR, colorScheme(context))
-            e.putString(KEY_THEME_FONT, themeFont(context))
-            e.putInt(KEY_PAPER_INTENSITY, paperIntensity(context))
-        }
-        e.putBoolean(KEY_CUSTOM_SEPARATE, separate)
-        e.commit()
-    }
-
-    fun paperIntensity(context: Context): Int =
-        if (customSeparate(context)) {
-            if (isNight(context)) paperIntensityNight(context) else paperIntensityDay(context)
-        } else {
-            paperIntensityCombined(context)
-        }
-
-    fun paperIntensityDay(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_PAPER_DAY, paperIntensityCombined(context))
-
-    fun paperIntensityNight(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_PAPER_NIGHT, paperIntensityCombined(context))
-
-    fun savePaperIntensityDay(context: Context, intensity: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putInt(KEY_PAPER_DAY, intensity.coerceIn(0, 200))
-        }
-    }
-
-    fun savePaperIntensityNight(context: Context, intensity: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putInt(KEY_PAPER_NIGHT, intensity.coerceIn(0, 200))
-        }
-    }
-
-    private fun paperIntensityCombined(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_PAPER_INTENSITY, 100)
-
-    private fun isNight(context: Context): Boolean {
-        val mode = context.resources.configuration.uiMode and
-            android.content.res.Configuration.UI_MODE_NIGHT_MASK
-        return mode == android.content.res.Configuration.UI_MODE_NIGHT_YES
-    }
-
-    fun savePaperIntensity(context: Context, intensity: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putInt(KEY_PAPER_INTENSITY, intensity.coerceIn(0, 200))
-        }
+    /** 升级时只删除已停用的主题偏好，账号、快递与其他设置保留。 */
+    fun clearLegacyThemePreferences(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val keys = listOf(
+            "theme", "theme_color", "theme_font", "theme_color_day", "theme_color_night",
+            "theme_font_day", "theme_font_night", "paper_intensity_day", "paper_intensity_night",
+            "custom_separate", "paper_intensity"
+        )
+        if (keys.none { prefs.contains(it) }) return false
+        prefs.edit { keys.forEach { remove(it) } }
+        return true
     }
 
     fun widgetShowDelivering(context: Context): Boolean =

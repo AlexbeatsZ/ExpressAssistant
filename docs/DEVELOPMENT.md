@@ -59,15 +59,15 @@ adb shell am start -n com.halo.expressassistant/.ui.MainActivity --es skip_chann
 - 短名：`GoodsPresentation.batchShorten` 每批 8 个、后台执行；提示词必须含“保留型号（如 MM3A）”；无 key 走 `ruleShorten`
 - 取件码：`pickupCodeFrom` 正则（取件码/取货码/提货码/自提码/驿站码/取件验证码，排除登录验证码）；列表同步与详情轨迹两处都提取，跨同步保留
 
-### 主题与纸感
-- 每个 Activity `onCreate` 第一行调 `Themes.apply(this)`，随后 `EdgeToEdge.apply(...)`，最后 `Paper.apply(this, binding.root, binding.toolbar)`
+### 固定莫奈主题
+- 每个 Activity `onCreate` 第一行调 `Themes.apply(this)`，随后 `EdgeToEdge.apply(...)`；统一 Material 动态取色、系统无衬线，无纸纹。
 - 页面根背景用 `?attr/surfaceBackground`，不要直接写死颜色
-- 动态创建的卡片（弹窗/后加视图）用 `Paper.styleCard` / `Paper.styleTree`
+- 动态创建的卡片保留 Material 默认背景与按压反馈。
 
 ### 设置页
 - 所有“二级菜单”都是上弹卡片：用 `Sheets.create(context, title, subtitle)` 得到 `(BottomSheetDialog, LinearLayout)`
 - 可选项统一用 `Sheets.optionRow(context, title, subtitle, checked) { ... }`
-- 主题卡片支持“原地展开”：点击选项后重绘 body，不要 `recreate()`；只有需要整体换肤时才在关闭卡片时重建
+- 不再提供主题卡片或主题偏好；旧主题键在应用升级启动时定向清理。
 - 新设置项 = Store 键 + SettingsActivity 里一个 row + 对应 sheet
 
 ### AI
@@ -77,12 +77,12 @@ adb shell am start -n com.halo.expressassistant/.ui.MainActivity --es skip_chann
 
 ### 小组件
 - 布局只允许 RemoteViews 支持的元素；禁止裸 `<View>`、`<include>`、RemoteViewsService
-- 新增格子要同时维护 `widget_express_list.xml` 与 `widget_express_list_lark.xml`（ID 必须一致）
+- 新增格子要同时维护 `widget_express_list.xml` 与 `widget_express_list_compact.xml`（ID 必须一致）
 
 ## 数据持久化
 
 - 全部存在 `SharedPreferences("express_store")`，JSON 字符串字段：items / chat_history / report_schedules / pending_report / xiaomi_hidden / jd_goods
-- 主要键：见 `Store.kt`；渠道凭证：xiaomi_token / xiaomi_cuser / jd_cookies / tb_cookies；主题相关：theme / theme_color(_day/_night) / theme_font(_day/_night) / paper_intensity(_day/_night) / custom_separate；日报：report_issue / report_first_date
+- 主要键：见 `Store.kt`；渠道凭证：xiaomi_token / xiaomi_cuser / jd_cookies / tb_cookies；旧主题相关键由 `clearLegacyThemePreferences` 清理；日报：report_issue / report_first_date
 - 不要手工编辑该文件；确有必要时：先 `am force-stop`，改完必须通过 XML 解析校验，否则 App 启动会把数据覆盖为空（调试期可用 `run-as cp` 从 `/data/local/tmp` 整份替换）
 
 ## 提交流程

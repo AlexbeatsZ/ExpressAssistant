@@ -183,7 +183,6 @@ class ExpressAdapter(
 
     inner class ItemHolder(private val binding: ItemExpressBinding) : RecyclerView.ViewHolder(binding.root) {
         fun bind(item: ExpressItem) {
-            Paper.styleCard(binding.root.context, binding.root)
             // 溯源商品替换卡片外显：标题=短名(或原名)，图标=商品图
             val goods = Store.jdGoods(binding.root.context)[item.mailNo]
             val goodsTitle = goods?.shortName?.ifBlank { goods?.name }.orEmpty()

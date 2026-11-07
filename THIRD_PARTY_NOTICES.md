@@ -1,6 +1,8 @@
 # Third-party notices
 
-## rice-paper.png（云雀主题纸纹素材）
+## 历史素材 rice-paper.png（云雀主题纸纹素材）
+
+v0.9.5 起已从应用移除该素材；以下保留历史来源与许可记录。
 
 来源：[openhanako](https://github.com/liliMozi/openhanako)
 
