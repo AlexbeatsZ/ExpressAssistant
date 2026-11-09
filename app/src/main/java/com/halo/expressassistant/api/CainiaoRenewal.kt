@@ -68,16 +68,14 @@ object CainiaoRenewal {
         }
     }
 
-    private fun authenticated(ctx: Context, session: JSONObject, api: String, data: JSONObject, alreadyRenewed: Boolean = false): Pair<JSONObject, H5Mtop> {
-        val renewed = alreadyRenewed || renewMember(ctx, session)
-        var http = H5Mtop(session.getString("cookie"))
-        try { return http.call(api, data) to http }
-        catch (e: CainiaoServiceException) {
-            if (e.kind != CainiaoServiceException.Kind.LOGIN_EXPIRED || renewed || !renewMember(ctx, session, force = true)) throw e
-            http = H5Mtop(session.getString("cookie"))
-            return http.call(api, data) to http
-        }
-    }
+    private fun authenticated(ctx: Context, session: JSONObject, api: String, data: JSONObject): Pair<JSONObject, H5Mtop> =
+        CainiaoSessionAccess.read(
+            request = {
+                val http = H5Mtop(session.getString("cookie"))
+                http.call(api, data) to http
+            },
+            renew = { renewMember(ctx, session, force = true) }
+        )
 
     suspend fun queryParcel(ctx: Context, mailNo: String, includePickup: Boolean = true): JSONObject = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -148,11 +146,18 @@ object CainiaoRenewal {
             val session = CainiaoSessionStore.read(ctx) ?: return@withLock null
             try {
                 // Member lifetime is independent of the 15-day material cache.
-                val renewed = renewMember(ctx, session)
+                if (!force) {
+                    // Proactive renewal is useful, but lack of its native runtime must not block a valid H5 cookie/material.
+                    try { renewMember(ctx, session) }
+                    catch (e: CainiaoServiceException) {
+                        session.put("lastSessionRenewError", e.kind.name)
+                        CainiaoSessionStore.save(ctx, session)
+                    }
+                }
                 val old = CainiaoIdentity.parse(session.getJSONObject("material"))
                 if (!force && old.expiresAtMs - System.currentTimeMillis() > DAY_MS) return@withLock old
                 val (data, http) = authenticated(ctx, session, "mtop.cainiao.nbpickup.native.identitycode.get.cn", JSONObject()
-                    .put("channel", "GUOGUO").put("codeType", old.codeType.toString()).put("verifyVersion", "V2"), alreadyRenewed = renewed)
+                    .put("channel", "GUOGUO").put("codeType", old.codeType.toString()).put("verifyVersion", "V2"))
                 val model = data.getJSONObject("model").put("codeType", old.codeType.toString())
                 val fresh = CainiaoIdentity.parse(model)
                 check(fresh.userIndex == old.userIndex && fresh.expiresAtMs > System.currentTimeMillis() && fresh.expiresAtMs >= old.expiresAtMs)

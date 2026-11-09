@@ -102,3 +102,19 @@ UserLoginServiceImpl 构造 mtop.taobao.mloginService.smsSend / smsLogin 1.0。l
 - 后续实验应在项目隔离构建中保留插件原始字节，先验证独立加载，再验证真实只读查询及续登；成功标准必须是不通过官方已安装包获取代码/资源。正式替换前还需明确组件分发条件。
 
 减少服务依赖与减少安装依赖分开处理：手动运单已有 KuaiDi100 查询路径，本轮补入正常同步；JD/PDD/TB 各自提供订单/轨迹。菜鸟取件码、身份码与会员续登仍使用菜鸟服务，本轮未取得可替代这些服务的证据。公开实现搜索未返回可用的最小运行时实现，不能据此认定不存在。
+
+## 2026-11-09 内置运行时实机实验与 H5 优先（v0.9.9）
+
+本轮在 K70 Android16 / HyperOS3 上使用本人既有会话做本地实验，不发送短信、不修改授权。未卸载官方 App。实验包沿用主 App 签名覆盖，实验入口与官方资源最终全部移除；正式代码恢复已验证的安装运行时路径。
+
+实测：
+- H5 直接调用 identitycode.get.cn 返回 model；相同 Cookie 调包裹详情 `.get.cn` 与 `.get` 均被拒绝。身份接口成功不能泛化到包裹接口。
+- 从本人 8.11.1023 APK 提取安全包名下188类，补充原生动态引用 OneMain 后190类；保留原始签名插件、原生库、资源表/安全图片，压缩资源包2,882,646字节（最初188类版本）。只用快递助手私有路径的 DexClassLoader，不调用 createPackageContext 加载官方安装代码。
+- 初始类裁剪缺少 com.alibaba.one.android.sdk.OneMain，libsgsecuritybody 后台加载触发 ClassNotFoundException/SIGABRT；补上后已能保持进程运行。这类 JNI 动态依赖不能只靠静态 Java 引用裁剪。
+- 独立数据目录后管理器初始化通过，但 getAppKeyByIndex 返回 SecException203；原包内错误常量对应 SEC_ERROR_STA_STORE_NO_DATA_FILE。安全图直接打入本 App且资源ID可查、ApplicationInfo使用原始APK路径、加载完整原始APK代码等对照仍未通过。不能把203直接判定为证书校验失败。
+- 改成原包资源命名空间/文件上下文的完整对照停在管理器初始化，没有产生签名；进程被主动停止。没有证明最小组件可独立查询/续登，更没有证明无官方安装工作。
+- 只保存带run标记的最小结果/自写实验源码至outputs/.private/cainiao-runtime/research-embedded-20261109，不发布组件和会话。下一步需要定位安全配置文件实际定位逻辑与独立加载上下文，再补齐动态依赖；不要重复把未知错误归因于签名。
+
+实际落地：在线身份码与强制材料刷新改为直接H5读取，只有明确LOGIN_EXPIRED才原生续登并重试一次。网络失败/请求拒绝不触发续登。后台仍尝试提前续登，但其失败不再阻断已有有效离线材料或H5刷新。原生会员续登/包裹取件码仍需现有运行时；此改动是减少使用依赖，不是移除安装依赖。
+
+正式v0.9.9验证：60单测、lint与release签名通过；K70 online和材料刷新均200，lastSessionRenewedAtMs保持原值，证明本次没有预先原生续登；随后显式session/refresh200并推进session/refresh期限。203件、JD/TB/PDD各1账号保留。正式APK归档检查无security-runtime/source-runtime/yw_1222实验资源，手机临时目录在清理版启动时定向移除，最终安装版不留实验入口。
