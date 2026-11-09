@@ -79,6 +79,35 @@ object CainiaoRenewal {
         }
     }
 
+    suspend fun queryParcel(ctx: Context, mailNo: String): JSONObject = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val session = CainiaoSessionStore.read(ctx) ?: throw CainiaoServiceException(CainiaoServiceException.Kind.NO_SESSION)
+            val renewed = renewMember(ctx, session)
+            fun call(api: String, data: JSONObject) = CainiaoMemberRenewal.call(ctx, api, data,
+                session.getJSONObject("member"), session.getJSONObject("native"))
+            fun request(): JSONObject {
+                val response = call("mtop.cainiao.lde.detail.orderCode.mailNo.resCode.get.cn", JSONObject().put("mailNo", mailNo))
+                val initial = CainiaoPickup.parse(response, mailNo)
+                if (initial.code.isNotBlank() || initial.status in setOf("completed", "mismatch")) return response
+                val station = initial.stationId
+                if (station.isNotBlank()) {
+                    val auth = call("mtop.cainiao.nbpickup.pickupcode.queryauth.cn", JSONObject().put("stationId", station))
+                    response.put("pickupAuth", auth)
+                    val state = auth.optJSONObject("data")
+                    if (state?.optBoolean("identityCodeCertificated") == true && state.optBoolean("authToGetPickupCode")) {
+                        response.put("pickupResult", call("mtop.cainiao.nbpickup.pickupcode.genericverify.cn",
+                            JSONObject().put("stationId", station).put("queryContent", mailNo)))
+                    }
+                }
+                return response
+            }
+            try { request() } catch (e: CainiaoServiceException) {
+                if (e.kind != CainiaoServiceException.Kind.LOGIN_EXPIRED || renewed || !renewMember(ctx, session, true)) throw e
+                request()
+            }
+        }
+    }
+
     suspend fun importConfiguration(ctx: Context, raw: String): String = withContext(Dispatchers.IO) {
         mutex.withLock { PhoneProvisioning.import(ctx, raw) }
     }

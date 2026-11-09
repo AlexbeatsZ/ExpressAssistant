@@ -383,3 +383,9 @@ GET /api/status 的 identity 增加以下元数据，不含实际身份码：
 状态增加`autoRenewConfigured`、`canAutoRenew`、`sessionExpiresAtMs`、`refreshTokenExpiresAtMs`、`lastSessionRenewedAtMs`、`lastSessionRenewAttemptAtMs`。不返回账号ID、会员Token、Cookie、签名或设备标识。`CAINIAO_AUTO_RENEW_NOT_CONFIGURED`返回409；`CAINIAO_AUTH_RUNTIME_UNAVAILABLE`返回503并保留有效缓存。
 
 当前签名运行时来自手机已安装且证书匹配的官方菜鸟8.11.1023，需保留安装。快递助手使用自己的进程和存储，不启动官方App，不依赖ADB常连；发布包不附带官方SDK或任何本人凭证。独立手机号首次登录、跨30天持续运行和真实驿站扫码仍需单独验收，不能由一次续登成功推定永久免登录。
+
+### 手机取件凭据（Android 0.9.7）
+
+手机 `/api/express` 与 `/api/pickup` 增加 `pickupHint` 和 `trackingNumber`。`pickupCode` 仅表示平台实际返回的取件码；若拼多多返回「取件出示快递单号后五位」，完整说明在 `pickupHint`，不能将该末五位当作驿站码。PDD 的 `mailNo` 仍兼容既有本地订单键，真实运单号在 `trackingNumber`，`orderId` 不变。已取件清除取件凭据；到站后 ETA 为空。
+
+拼多多已知真实运单会自动查询本人菜鸟登录态，优先显示菜鸟实际返回的 `pickupCode`。`pickupCodeSource=cainiao` 表示菜鸟取码来源，`pickupQueryStatus` 表示最近查询结果（`ok`、`authorization_required`、`verification_required` 等），`pickupQueriedAt` 为毫秒时间戳；无码时的 `pickupHint` 仍仅是备用方式。此查询无需电脑或 ADB 常连。

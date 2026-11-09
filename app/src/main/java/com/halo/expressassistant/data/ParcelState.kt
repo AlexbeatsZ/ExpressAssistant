@@ -4,6 +4,9 @@ package com.halo.expressassistant.data
 object ParcelState {
     private val depotHints = listOf("驿站", "快递柜", "代收", "待取件", "丰巢", "自提点", "暂存")
 
+    fun awaitingPickup(text: String): Boolean = listOf("待取件", "待取货", "请及时取件", "请凭取件码", "已入柜").any(text::contains) ||
+        (depotHints.any(text::contains) && listOf("已送达", "已到达", "已由", "代收", "暂存").any(text::contains))
+
     fun collected(text: String): Boolean {
         if (listOf("已取走", "已完成取件", "快件领取成功", "已提货", "已取货").any(text::contains)) return true
         return text.contains("已签收") && depotHints.none(text::contains)
@@ -17,7 +20,8 @@ object ParcelState {
             latestText = last.context.take(220).ifBlank { item.latestText },
             latestTime = latestTime.ifBlank { item.latestTime }
         ) else item
-        return if (received) result.copy(state = 3, stateNum = 107, receiptConfirmed = true, pickupCode = "",
-            stateName = if (PddOrderStatus.completedLabel(result.stateName)) result.stateName else "已签收") else result
+        return if (received) result.copy(state = 3, stateNum = 107, receiptConfirmed = true, pickupCode = "", pickupHint = "", eta = "",
+            stateName = if (PddOrderStatus.completedLabel(result.stateName)) result.stateName else "已签收")
+        else if (result.isAwaitingPickup()) result.copy(eta = "") else result
     }
 }

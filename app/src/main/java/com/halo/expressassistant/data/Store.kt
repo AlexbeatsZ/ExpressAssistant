@@ -710,7 +710,7 @@ object Store {
         val e = map[mailNo] ?: return true
         if (e.points.isEmpty()) return true
         if (done || e.done) return false // 已完成：轨迹不会再变，始终用已保存的
-        return System.currentTimeMillis() - e.fetchedAt > 3600 * 1000L
+        return e.logisticsVersion < 1 || System.currentTimeMillis() - e.fetchedAt > 3600 * 1000L
     }
 
     fun pddTraceLastFetch(context: Context, mailNo: String): Long {
@@ -725,7 +725,8 @@ object Store {
         mailNo: String,
         points: List<DetailPoint>,
         done: Boolean = false,
-        fetchedAt: Long = System.currentTimeMillis()
+        fetchedAt: Long = System.currentTimeMillis(),
+        logisticsVersion: Int = 0
     ) {
         if (points.isEmpty()) return
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -734,7 +735,7 @@ object Store {
                 prefs.getString(KEY_PDD_TRACES, null) ?: "{}"
             )
         }.getOrElse { emptyMap() }.toMutableMap()
-        map[mailNo] = PddTraceCache(fetchedAt = fetchedAt, points = points, done = done)
+        map[mailNo] = PddTraceCache(fetchedAt = fetchedAt, points = points, done = done, logisticsVersion = logisticsVersion)
         // 始终保存：仅做超大安全上限（2000 单），正常量级不淘汰
         val trimmed = map.entries.sortedByDescending { it.value.fetchedAt }.take(2000).associate { it.key to it.value }
         prefs.edit().putString(KEY_PDD_TRACES, json.encodeToString(trimmed)).commit()

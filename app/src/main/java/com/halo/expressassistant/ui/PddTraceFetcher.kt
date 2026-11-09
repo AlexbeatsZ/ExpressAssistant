@@ -59,7 +59,7 @@ object PddTraceFetcher {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    data class TraceResult(val points: List<DetailPoint>, val goods: JdGoods?)
+    data class TraceResult(val points: List<DetailPoint>, val goods: JdGoods?, val logistics: PddLogistics.Result? = null)
 
     /** 详情页时间线（source=pdd）——旧接口：第一个启用拼多多账号 */
     suspend fun fetch(act: Activity, item: ExpressItem): List<DetailPoint>? =
@@ -67,7 +67,7 @@ object PddTraceFetcher {
 
     /** 多源绑定：按指定拼多多账号凭证；silent=true 用于后台补抓（永不显示 WebView） */
     suspend fun fetchWith(act: Activity, item: ExpressItem, pddCookies: String, silent: Boolean = false): List<DetailPoint>? =
-        run(act, orderIdOf(item), pddCookies, silent)?.points
+        run(act, orderIdOf(item), pddCookies, silent)?.also { applyResultToItem(act, item, it); refreshCainiaoPickup(act, item.mailNo) }?.points
 
     /** 完整结果（轨迹 + 商品，供详情页统一更新） */
     suspend fun fetchResult(act: Activity, item: ExpressItem): TraceResult? =
@@ -79,7 +79,7 @@ object PddTraceFetcher {
 
     /** 多源绑定：按指定拼多多账号凭证解析商品 */
     suspend fun resolveGoodsWith(act: Activity, item: ExpressItem, pddCookies: String): JdGoods? =
-        run(act, orderIdOf(item), pddCookies, false)?.goods
+        run(act, orderIdOf(item), pddCookies, false)?.also { applyResultToItem(act, item, it); refreshCainiaoPickup(act, item.mailNo) }?.goods
 
     private fun orderIdOf(item: ExpressItem): String = item.queryChannel.ifBlank { item.mailNo }
 
@@ -87,29 +87,53 @@ object PddTraceFetcher {
      * 轨迹「双写」：① 存入 pdd_traces 缓存；② 回写卡片外显字段
      * latestText/latestTime/pickupCode（列表接口只有状态提示，真实最后轨迹在物流页）。
      */
-    fun applyTraceToItem(act: Activity, item: ExpressItem, points: List<DetailPoint>, done: Boolean = item.state == 3) {
-        if (points.isEmpty()) return
-        Store.savePddTrace(act, item.mailNo, points, done)
-        val last = points.last()
-        val code = runCatching { GoodsPresentation.pickupCodeFrom(last.context) }.getOrNull()
-        val items = Store.items(act).map {
-            if (it.mailNo == item.mailNo && it.source == "pdd") {
-                it.copy(
-                    latestText = last.context.take(220).ifBlank { it.latestText },
-                    latestTime = last.time.ifBlank { it.latestTime },
-                    pickupCode = it.pickupCode.ifBlank { code ?: it.pickupCode }
-                )
-            } else {
-                it
+    private fun applyResultToItem(act: Activity, item: ExpressItem, result: TraceResult) {
+        if (result.points.isEmpty()) return
+        val meta = result.logistics
+        Store.savePddTrace(act, item.mailNo, result.points, item.isCompleted(), logisticsVersion = if (meta != null) 1 else 0)
+        Store.saveItems(act, Store.items(act).map {
+            if (it.mailNo != item.mailNo || it.source != "pdd") it else {
+                val enriched = if (meta == null) it else it.copy(
+                    pickupCode = if (it.isCompleted()) "" else meta.pickupCode.ifBlank { if (it.pickupCodeSource == "cainiao") it.pickupCode else "" },
+                    pickupHint = if (it.isCompleted()) "" else meta.pickupHint,
+                    trackingNumber = meta.trackingNumber.ifBlank { it.trackingNumber },
+                    station = meta.station.ifBlank { it.station })
+                DetailState.reconcile(enriched, com.halo.expressassistant.data.ExpressDetail(
+                    it.mailNo, it.companyName, it.state, it.isCompleted(), result.points))
             }
-        }
-        Store.saveItems(act, items)
+        })
     }
 
-    /** 已有缓存 → 回填卡片（处理历史数据：卡片轨迹外显此前未生效） */
+    suspend fun refreshCainiaoPickup(act: Activity, itemKey: String) {
+        val current = Store.items(act).firstOrNull { it.mailNo == itemKey } ?: return
+        val mail = current.trackingNumber
+        if (mail.isBlank() || !current.isAwaitingPickup() || current.pickupCode.isNotBlank()) return
+        val now = System.currentTimeMillis()
+        if (now - current.pickupQueriedAt < 3600_000L) return
+        var code = ""
+        var station = ""
+        val status = try {
+            val response = com.halo.expressassistant.api.CainiaoRenewal.queryParcel(act, mail)
+            val result = com.halo.expressassistant.api.CainiaoPickup.parse(response, mail)
+            code = result.code
+            station = result.station
+            result.status
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: com.halo.expressassistant.api.CainiaoServiceException) { e.kind.name.lowercase() }
+        catch (_: Exception) { "unavailable" }
+        Store.saveItems(act, Store.items(act).map {
+            if (it.mailNo != itemKey || it.isCompleted()) it else it.copy(
+                pickupCode = code.ifBlank { it.pickupCode },
+                pickupCodeSource = if (code.isNotBlank()) "cainiao" else it.pickupCodeSource,
+                station = station.ifBlank { it.station }, pickupQueryStatus = status, pickupQueriedAt = now)
+        })
+    }
+
+    /** Cached traces and freshly loaded traces share the same reconciliation rules. */
     fun applyCachedTraceToItem(act: Activity, item: ExpressItem) {
         val cached = Store.pddTraces(act, item.mailNo) ?: return
-        val reconciled = com.halo.expressassistant.data.ParcelState.withTrace(item, cached)
+        val reconciled = DetailState.reconcile(item, com.halo.expressassistant.data.ExpressDetail(
+            item.mailNo, item.companyName, item.state, item.isCompleted(), cached))
         if (reconciled != item) Store.saveItems(act, Store.items(act).map { if (it.mailNo == item.mailNo) reconciled else it })
     }
 
@@ -232,12 +256,18 @@ object PddTraceFetcher {
                 }
                 // 每轮读一次 DOM 文本（物流轨迹线）与 JSON 捕获（商品等）
                 w.evaluateJavascript(
-                    "(function(){return document.body ? document.body.innerText.slice(0,30000) : 'no-body';})()"
+                    """(function(){return JSON.stringify({text:document.body ? document.body.innerText.slice(0,30000) : '',
+                        store:location.pathname.indexOf('goods_express') >= 0 && window.rawData ? window.rawData.store : null});})()"""
                 ) { v ->
-                    val domPoints = parseDomPoints(v)
+                    val page = runCatching {
+                        JSONObject(org.json.JSONTokener(v).nextValue() as String)
+                    }.getOrNull()
+                    val logistics = page?.optJSONObject("store")?.let(PddLogistics::parse)
+                    val domPoints = logistics?.points?.takeIf { it.isNotEmpty() }
+                        ?: parseDomPoints(page?.optString("text"))
                     Log.i(TAG, "round=$rounds domPoints=${domPoints.size}")
                     if (domPoints.isNotEmpty()) {
-                        val r = TraceResult(domPoints, null)
+                        val r = TraceResult(domPoints, null, logistics)
                         val stable = domPoints.size == lastCount
                         lastCount = domPoints.size
                         if ((stable && rounds >= 2) || rounds > 10) finish(r) else handler.postDelayed(this, 2000)

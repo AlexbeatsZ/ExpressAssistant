@@ -192,7 +192,7 @@ object PhoneControl {
                 Store.items(ctx).forEach { item ->
                     val done = item.isCompleted() || item.state == 4 || item.stateNum in 108..111
                     val code = if (done) "" else item.pickupCode
-                    if (!pickupOnly || !done && (code.isNotBlank() || listOf("待取件", "驿站", "快递柜").any { item.latestText.contains(it) })) {
+                    if (!pickupOnly || item.isAwaitingPickup()) {
                         put(JSONObject(Store.json.encodeToString(item)).put("pickupCode", code)
                             .put("orderOnly", item.orderOnly).put("orderId", if (item.source in setOf("taobao", "pdd", "jd")) item.queryChannel else "")
                             .put("goodsName", goods[item.mailNo]?.name.orEmpty()))

@@ -191,7 +191,7 @@ class MainActivity : AppCompatActivity() {
         val goods = Store.jdGoods(this)
         val q = searchQuery.lowercase()
         val rows = if (q.isBlank()) all else all.filter { item ->
-            listOf(item.mailNo, item.companyName, item.latestText, item.pickupCode, goods[item.mailNo]?.name.orEmpty()).any { it.lowercase().contains(q) }
+            listOf(item.mailNo, item.companyName, item.latestText, item.pickupCode, item.pickupHint, item.trackingNumber, goods[item.mailNo]?.name.orEmpty()).any { it.lowercase().contains(q) }
         }
         adapter.setSearchMode(q.isNotBlank()); adapter.submit(rows)
         val empty = if (q.isNotBlank()) rows.isEmpty() else rows.none { isTransportItem(it) }
@@ -215,7 +215,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun arrivalDateOf(item: ExpressItem): Pair<Int, Int>? {
-        val eta = item.eta
+        val eta = item.etaLabel()
         if (eta.isBlank()) return null
         val m = Regex("(\\d{1,2})月(\\d{1,2})日").find(eta) ?: return null
         return m.groupValues[1].toInt() to m.groupValues[2].toInt()
@@ -791,10 +791,10 @@ class MainActivity : AppCompatActivity() {
                 setTrackColor(MaterialColors.getColor(this@MainActivity, android.R.attr.colorControlNormal, 0))
             }
             content.addView(progressBar)
-            val eta = item.eta
+            val eta = item.etaLabel()
             if (eta.isNotBlank()) {
                 val etaView = TextView(this).apply {
-                    text = "预计送达：$eta"
+                    text = eta
                     textSize = 13f
                     setTextColor(primary())
                     setPadding(0, dp(6), 0, 0)

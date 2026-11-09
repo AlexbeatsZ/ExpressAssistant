@@ -156,7 +156,7 @@ class ExpressWidgetProvider : AppWidgetProvider() {
             val allItems = Store.items(context)
             val items = allItems.filter {
                 when (sectionKeyOf(it)) {
-                    "delivering" -> Store.widgetShowDelivering(context)
+                    "pickup", "delivering" -> Store.widgetShowDelivering(context)
                     "shipped" -> Store.widgetShowShipped(context)
                     "notshipped" -> Store.widgetShowNotShipped(context)
                     else -> false
@@ -348,17 +348,13 @@ class ExpressWidgetProvider : AppWidgetProvider() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-        /**
-         * 时间行文案。优先 ETA（取"X月X日"），否则用轨迹时间的 MM-dd。
-         * **统一去掉"预计"前缀**：最窄档（8 列列宽仅约 43dp）"预计今天送达"会被横向省略成
-         * "预计今…"，而"今天送达"任何档位都放得下；宽松档也一并去掉，保持各件数文案一致。
-         */
+        /** 预计时间保留明确前缀；到站后显示实际轨迹日期。 */
         private fun timeOf(item: ExpressItem): String {
-            val eta = item.eta
+            val eta = item.etaLabel()
             if (eta.isNotBlank()) {
                 val hit = Regex("(\\d{1,2}月\\d{1,2}日)").find(eta)?.groupValues?.get(1)
-                if (hit != null) return hit
-                return etaBody(eta).take(7)
+                if (hit != null) return "预计$hit"
+                return eta.take(9)
             }
             val t = item.latestTime.trim()
             if (t.isBlank()) return ""
@@ -377,7 +373,7 @@ class ExpressWidgetProvider : AppWidgetProvider() {
             for (item in items) {
                 when (sectionKeyOf(item)) {
                     "delivering" -> { delivering++; transit++ }
-                    "shipped", "notshipped" -> transit++
+                    "pickup", "shipped", "notshipped" -> transit++
                     "abnormal" -> abnormal++
                     "done" -> done++
                 }
@@ -400,19 +396,20 @@ class ExpressWidgetProvider : AppWidgetProvider() {
 
         private fun smallDetail(items: List<ExpressItem>): String {
             val inTransit = items.sortedBy { orderOf(it) }.firstOrNull {
-                sectionKeyOf(it) in setOf("delivering", "shipped", "notshipped")
+                sectionKeyOf(it) in setOf("pickup", "delivering", "shipped", "notshipped")
             }
             if (inTransit == null) return "点击打开快递助手"
-            val eta = etaBody(inTransit.eta)
+            val eta = etaBody(inTransit.etaLabel())
             return if (eta.isNotBlank()) {
                 // eta 本身多半自带"预计"，这里去前缀再拼，避免"预计 预计今天送达"
                 "${inTransit.companyName} · 预计 $eta"
             } else {
-                "${inTransit.companyName} · ${inTransit.latestText.ifBlank { inTransit.stateLabel() }}"
+                "${inTransit.companyName} · ${inTransit.pickupLabel().ifBlank { inTransit.stateLabel() }}"
             }
         }
 
         private fun orderOf(item: ExpressItem): Int = when (sectionKeyOf(item)) {
+            "pickup" -> -1
             "delivering" -> 0
             "shipped" -> 1
             "notshipped" -> 2

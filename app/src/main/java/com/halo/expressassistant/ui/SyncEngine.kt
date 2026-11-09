@@ -156,7 +156,10 @@ object SyncEngine {
                 latestTime = latestTime,
                 addressId = old.addressId,
                 receiptConfirmed = item.receiptConfirmed || old.receiptConfirmed || old.isCompleted(),
-                pickupCode = item.pickupCode.ifBlank { old.pickupCode }
+                pickupCode = item.pickupCode.ifBlank { old.pickupCode },
+                pickupHint = old.pickupHint, trackingNumber = old.trackingNumber,
+                pickupCodeSource = old.pickupCodeSource, pickupQueryStatus = old.pickupQueryStatus, pickupQueriedAt = old.pickupQueriedAt,
+                station = item.station.ifBlank { old.station }
             )
         }
         // 聚合取件码：从最新轨迹文本解析
@@ -169,17 +172,11 @@ object SyncEngine {
         }
         // 同步合并后立即回填「已抓取」的 PDD 轨迹到卡片（列表接口只有状态提示，
         // 避免每次同步把物流页回写的 latestText 覆盖回「交易成功」）
-        val pddPrompts = setOf("交易成功", "待评价", "已评价", "待发货", "待收货", "待成团", "待付款", "已取消", "退款成功", "交易关闭")
         val withTrace = withPickup.map { item ->
-            if (item.source != "pdd" || item.latestText !in pddPrompts) return@map item
+            if (item.source != "pdd") return@map item
             val pts = Store.pddTraces(act, item.mailNo) ?: return@map item
-            if (pts.isEmpty()) return@map item
-            val last = pts.last()
-            item.copy(
-                latestText = last.context.take(220).ifBlank { item.latestText },
-                latestTime = last.time.ifBlank { item.latestTime },
-                pickupCode = item.pickupCode.ifBlank { GoodsPresentation.pickupCodeFrom(last.context) ?: item.pickupCode }
-            )
+            DetailState.reconcile(item, com.halo.expressassistant.data.ExpressDetail(
+                item.mailNo, item.companyName, item.state, item.isCompleted(), pts))
         }
         // 已移除的快递不再复活：合并结果统一过滤用户手动移除过的单号
         // （PDD 并集/各渠道重抓会把服务端仍存在的单再次带回，此前从不查隐藏名单）

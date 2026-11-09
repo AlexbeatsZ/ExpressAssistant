@@ -64,6 +64,13 @@ data class ExpressItem(
     val addressId: String = "",
     /** 取件码（从轨迹文本解析，聚合显示） */
     val pickupCode: String = "",
+    /** 平台明确给出的替代取件方式，不冒充驿站取件码。 */
+    val pickupHint: String = "",
+    /** PDD 列表键是订单号；物流页另行提供真实运单号。 */
+    val trackingNumber: String = "",
+    val pickupCodeSource: String = "",
+    val pickupQueryStatus: String = "",
+    val pickupQueriedAt: Long = 0L,
     val station: String = "",
     val receiptConfirmed: Boolean = false,
     /** 订单已付款但尚未生成运单；mailNo 此时只作本地记录键。 */
@@ -82,6 +89,7 @@ data class ExpressItem(
 
     fun stateLabel(): String {
         if (stateOverride.isNotBlank()) return stateOverride
+        if (isAwaitingPickup()) return "待取件"
         if (stateName.isNotEmpty()) return stateName
         return when (state) {
             0 -> "运输中"
@@ -92,11 +100,24 @@ data class ExpressItem(
             else -> "未知"
         }
     }
+
+    fun isAwaitingPickup(): Boolean = !isCompleted() && !orderOnly && state != 4 && stateNum !in 108..111 &&
+        (pickupCode.isNotBlank() || pickupHint.isNotBlank() || ParcelState.awaitingPickup("$stateName $latestText"))
+
+    fun pickupLabel(): String = when {
+        isCompleted() || state == 4 || stateNum in 108..111 -> ""
+        pickupCode.isNotBlank() -> "取件码 $pickupCode"
+        else -> pickupHint
+    }
+
+    fun etaLabel(): String = if (isCompleted() || isAwaitingPickup() || eta.isBlank()) ""
+        else if (eta.startsWith("预计")) eta else "预计$eta"
 }
 
 fun sectionKeyOf(item: ExpressItem): String {
     if (item.partitionOverride.isNotBlank()) return item.partitionOverride
     if (item.isCompleted()) return "done"
+    if (item.isAwaitingPickup()) return "pickup"
     if (item.state < 0 && item.stateNum == 0) return "unknown"
     return when {
         item.stateNum == 105 || item.stateNum == 106 || item.state == 5 -> "delivering"
@@ -128,7 +149,7 @@ fun progressFor(item: ExpressItem): Int = when (item.stateNum) {
 }
 
 /** 从已知物流状态映射展示进度；未知状态不显示数值。 */
-fun displayProgress(item: ExpressItem): Int = if (item.orderOnly || item.state < 0 && item.stateNum == 0) -1 else progressFor(item)
+fun displayProgress(item: ExpressItem): Int = if (item.orderOnly || item.isAwaitingPickup() || item.state < 0 && item.stateNum == 0) -1 else progressFor(item)
 
 
 @Serializable
@@ -153,5 +174,6 @@ data class DetailPoint(
 data class PddTraceCache(
     val fetchedAt: Long = 0L,
     val points: List<DetailPoint> = emptyList(),
-    val done: Boolean = false
+    val done: Boolean = false,
+    val logisticsVersion: Int = 0
 )

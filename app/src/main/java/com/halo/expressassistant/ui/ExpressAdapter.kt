@@ -62,7 +62,7 @@ class ExpressAdapter(
     fun filteredFor(targetPage: Int): List<ExpressItem> = when (targetPage) {
         PAGE_DONE -> allItems.filter { bucket(it) == 3 }
         PAGE_ABNORMAL -> allItems.filter { bucket(it) == 4 }
-        else -> allItems.filter { bucket(it) in setOf(0, 1, 2, 5) }
+        else -> allItems.filter { bucket(it) in setOf(0, 1, 2, 5, 6) }
     }
 
     private fun rebuild() {
@@ -74,10 +74,15 @@ class ExpressAdapter(
         }
         when (page) {
             PAGE_TRANSPORT -> {
+                val pickup = allItems.filter { bucket(it) == 6 }
                 val delivering = allItems.filter { bucket(it) == 2 }
                 val after = allItems.filter { bucket(it) == 0 }
                 val before = allItems.filter { bucket(it) == 1 }
                 val unknown = allItems.filter { bucket(it) == 5 }
+                if (pickup.isNotEmpty()) {
+                    rows.add(Row.Header("待取件 · ${pickup.size}"))
+                    pickup.forEach { rows.add(Row.Item(it)) }
+                }
                 if (delivering.isNotEmpty()) {
                     rows.add(Row.Header("派送中 · ${delivering.size}"))
                     delivering.forEach { rows.add(Row.Item(it)) }
@@ -132,6 +137,7 @@ class ExpressAdapter(
             "abnormal" -> return 4
         }
         if (item.isCompleted()) return 3
+        if (item.isAwaitingPickup()) return 6
         if (item.state < 0 && item.stateNum == 0) return 5
         return when (item.stateNum) {
             101, 103 -> 1
@@ -197,7 +203,7 @@ class ExpressAdapter(
             binding.traceDivider.visibility = if (showTraceLine) android.view.View.VISIBLE else android.view.View.GONE
             binding.reason.text = reasonText(item)
             binding.reason.visibility = if (page == PAGE_ABNORMAL) android.view.View.VISIBLE else android.view.View.GONE
-            val etaText = item.eta
+            val etaText = item.etaLabel()
             binding.eta.text = if (etaText.isBlank()) "预计送达" else etaText
             binding.eta.visibility = if (etaText.isNotBlank()) android.view.View.VISIBLE else android.view.View.GONE
             val goodsPic = goods?.imageUrl.orEmpty()
@@ -219,8 +225,8 @@ class ExpressAdapter(
                 }
             }
             // 聚合取件码
-            binding.pickup.text = if (item.pickupCode.isNotBlank()) "取件码 ${item.pickupCode}" else ""
-            binding.pickup.visibility = if (item.pickupCode.isNotBlank()) android.view.View.VISIBLE else android.view.View.GONE
+            binding.pickup.text = item.pickupLabel().replace("取件出示快递单号后五位", "取件凭据 · 单号后五位")
+            binding.pickup.visibility = if (item.pickupLabel().isNotBlank()) android.view.View.VISIBLE else android.view.View.GONE
             binding.checkbox.visibility = android.view.View.GONE
             binding.root.setOnClickListener { onClick(item) }
             binding.root.setOnLongClickListener {

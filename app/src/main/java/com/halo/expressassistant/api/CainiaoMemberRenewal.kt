@@ -16,12 +16,17 @@ internal object CainiaoMemberRenewal {
 
     fun renew(ctx: Context, previous: JSONObject, device: JSONObject): JSONObject {
         if (!CainiaoMember.canRenew(previous)) throw CainiaoServiceException(CainiaoServiceException.Kind.LOGIN_EXPIRED)
+        val data = CainiaoMember.request(previous, device, CainiaoNativeRuntime.sdkVersion(ctx))
+        return CainiaoMember.accept(call(ctx, API, data, previous, device), previous)
+    }
+
+    fun call(ctx: Context, api: String, payload: JSONObject, previous: JSONObject, device: JSONObject): JSONObject {
         try {
-            val data = CainiaoMember.request(previous, device, CainiaoNativeRuntime.sdkVersion(ctx)).toString()
+            val data = payload.toString()
             val stamp = (System.currentTimeMillis() / 1000).toString()
-            val signed = CainiaoNativeRuntime.sign(ctx, API, data, previous, device, stamp)
+            val signed = CainiaoNativeRuntime.sign(ctx, api, data, previous, device, stamp)
             fun encode(value: String) = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
-            val url = "https://cn-acs.m.cainiao.com/gw/$API/1.0/".toHttpUrl().newBuilder()
+            val url = "https://cn-acs.m.cainiao.com/gw/$api/1.0/".toHttpUrl().newBuilder()
                 .addQueryParameter("data", data).addQueryParameter("wua", signed.getValue("wua")).build()
             val request = Request.Builder().url(url)
                 .header("User-Agent", "Dalvik/2.1.0 (Linux; U; Android ${android.os.Build.VERSION.RELEASE})")
@@ -41,7 +46,7 @@ internal object CainiaoMemberRenewal {
             val ret = response.optJSONArray("ret")
             val codes = (0 until (ret?.length() ?: 0)).map { ret!!.optString(it).substringBefore("::") }
             if ("SUCCESS" !in codes) throw CainiaoServiceException.fromCodes(codes)
-            return CainiaoMember.accept(response, previous)
+            return response
         } catch (error: CainiaoServiceException) { throw error }
         catch (_: IOException) { throw CainiaoServiceException(CainiaoServiceException.Kind.NETWORK) }
         catch (_: Exception) { throw CainiaoServiceException(CainiaoServiceException.Kind.INVALID_RESPONSE) }

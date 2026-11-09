@@ -72,10 +72,10 @@ object CainiaoPackages {
     fun merge(existing: List<ExpressItem>, packages: List<ExpressItem>): List<ExpressItem> {
         val merged = existing.associateByTo(linkedMapOf()) { it.mailNo }
         for (pkg in packages) {
-            val old = merged[pkg.mailNo]
+            val old = merged[pkg.mailNo] ?: merged.values.firstOrNull { it.trackingNumber == pkg.mailNo }
             if (old != null) {
                 val done = old.state in setOf(3, 4) || old.stateNum in 106..111 || pkg.state in setOf(3, 4)
-                merged[pkg.mailNo] = if (old.source == "cainiao") pkg.copy(tracked = old.tracked, addressId = old.addressId)
+                merged[old.mailNo] = if (old.source == "cainiao") pkg.copy(tracked = old.tracked, addressId = old.addressId)
                 else old.copy(pickupCode = if (done) "" else pkg.pickupCode, station = pkg.station.ifBlank { old.station })
             } else if (pkg.state !in setOf(3, 4)) merged[pkg.mailNo] = pkg
         }

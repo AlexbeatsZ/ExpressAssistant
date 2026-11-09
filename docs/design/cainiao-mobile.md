@@ -60,3 +60,12 @@
 - 新POST /api/session/refresh用于明确触发会员续登；状态只增加配置状态和期限，不返回会员ID、Token、Cookie、原设备标识。setup与续登共用互斥锁；先保存新会员凭证，再处理Cookie与后续请求。
 - 需保留已安装且证书匹配的官方菜鸟作为本地签名运行时，正式App不会启动其Activity/进程，也不依赖ADB。第一次消费者短信登录仍未接入；不得将会员续登写成独立首次登录完成。
 - K70真实旧Cookie失效→App内原生续登→online200→材料200与冷启动后续登均通过；官方菜鸟进程关闭、临时探针已删除，203件/三平台账号保持。37单测、lint零错误、签名release通过。身份实屏有条码及倒计时，无登录失效提示；站点扫码和跨30天运行未验收。
+
+## 拼多多运单自动查菜鸟取件码（v0.9.7）
+
+- PDD 订单列表的本地键不是运单号。先从 `goods_express` 的 `rawData.store.traceData.shipping.trackingNumber` 取得真实运单，保存到 trackingNumber；不改本地键与商品关联。
+- 淘宝 H5 queryalltrace 能读这件的待取件轨迹，但不返回隐私保护取件码。现有菜鸟会员原生会话可调 `mtop.cainiao.lde.detail.orderCode.mailNo.resCode.get.cn`，参数 mailNo；响应 `data.globalData` 给 mailNo/stationId，`uiProtocolData` 给取件码栏。屏蔽码 **** 不能显示为取件码。
+- 取码流程复用官方已存在路径：queryauth.cn(stationId)，仅 identityCodeCertificated 与 authToGetPickupCode 均 true 时，调用 genericverify.cn(stationId, queryContent=真实运单号)。只接受 verifyResult=true 且 packageDTOList 中 mailNo/stationId 精确匹配的 pickupCode。不会自行签协议、实名、发送短信或跳过验证。
+- 原生请求共用已安装的官方签名运行时与加密会员状态，在续登互斥锁内处理过期恢复。包裹查询失败不污染身份码错误状态。
+- 仅待取件且尚无码的记录查询；成功码保留，失败至少间隔1小时，避免每次刷新消耗取码次数。下次列表同步匹配 trackingNumber；终态清除凭据。无法自动取得时详情明确显示需本人授权/验证或暂不可用，PDD 顶部末五位作为备用提示。
+- K70 本人留样完成真实闭环：PDD 自动抓真实运单→菜鸟详情返回隐私保护→既有授权 true/true→genericverify 返回该件真正驿站码。临时响应仅用于确认协议，正式构建移除文件输出。

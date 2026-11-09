@@ -195,9 +195,7 @@ class DetailActivity : AppCompatActivity() {
                     "pdd" -> {
                         // 轨迹缓存：3 小时内直接显示，不重新走 WebView 流程
                         val cached = Store.pddTraces(this@DetailActivity, item.mailNo)
-                        val traces = cached ?: PddTraceFetcher.fetchWith(this@DetailActivity, item, pddCookies).also { r ->
-                            if (r != null) PddTraceFetcher.applyTraceToItem(this@DetailActivity, item, r)
-                        }
+                        val traces = cached ?: PddTraceFetcher.fetchWith(this@DetailActivity, item, pddCookies)
                         ExpressDetail(
                             mailNo = item.mailNo,
                             companyName = item.companyName,
@@ -379,6 +377,32 @@ class DetailActivity : AppCompatActivity() {
         content.addView(holder)
         refreshGoods(item)
 
+        if (item.pickupLabel().isNotBlank()) content.addView(TextView(this).apply {
+            text = item.pickupLabel()
+            textSize = 17f
+            setTextColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.colorPrimary, Color.BLUE))
+            setPadding(dp(18), dp(8), dp(18), dp(12))
+            setTextIsSelectable(true)
+        })
+        val pickupStatusText = when (item.pickupQueryStatus) {
+            "authorization_required" -> "菜鸟取件码需完成本人授权"
+            "verification_required" -> "菜鸟取件码需完成本人验证"
+            "login_expired", "no_session" -> "菜鸟登录失效，暂未取得取件码"
+            "ok", "" -> ""
+            else -> if (item.pickupCode.isBlank()) "暂未取得菜鸟取件码，稍后自动重试" else ""
+        }
+        if (pickupStatusText.isNotBlank() && item.isAwaitingPickup()) content.addView(TextView(this).apply {
+            text = pickupStatusText
+            textSize = 13f
+            setPadding(dp(18), 0, dp(18), dp(8))
+        })
+        if (item.trackingNumber.isNotBlank() && item.trackingNumber != item.mailNo) content.addView(TextView(this).apply {
+            text = "运单号：${item.trackingNumber}"
+            textSize = 13f
+            setPadding(dp(18), 0, dp(18), dp(8))
+            setTextIsSelectable(true)
+        })
+
         val progress = displayProgress(item)
         val statusRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -420,10 +444,10 @@ class DetailActivity : AppCompatActivity() {
             }
             headerProgressBar = bar
             content.addView(bar)
-            val eta = item.eta
+            val eta = item.etaLabel()
             if (eta.isNotBlank()) {
                 val etaText = TextView(this).apply {
-                    text = "预计送达：$eta"
+                    text = eta
                     textSize = 14f
                     setTextColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.colorPrimary, Color.BLUE))
                     layoutParams = LinearLayout.LayoutParams(
