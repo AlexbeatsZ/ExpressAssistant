@@ -89,3 +89,16 @@ UserLoginServiceImpl 构造 mtop.taobao.mloginService.smsSend / smsLogin 1.0。l
 - 经手机维护API只导入新的cainiao部分，202条快递和JD/TB/PDD各1账号保持；POST /api/identity/online/refresh与/api/identity/refresh均200，source=online、needsLogin=false、错误清除。手机实际点击刷新使码变化；CODE128解码与屏幕一致，新旧在线码均反解为同一原离线账号。在线不同请求不要求返回同一码。
 - 用新有效Cookie复核customer.autologin的H5预检：12574478、23050477两个appKey均FAIL_SYS_UNAUTHORIZED_ENTRANCE。存在已有H5 token也不改变入口拒绝。没有发送真实refreshToken尝试轮换，未破坏官方App现有会员会话。
 - 尚缺独立消费者短信登录的受支持入口/原生环境、会员转换与自动续登。当前保存会员token是研究材料，不是正式App已具备长期免登录。正式身份材料与Cookie仍加密保存在快递助手中。
+
+## 2026-11-09 最小运行时研究（未替换正式依赖）
+
+用户允许研究将必要组件集成到 APK，以去掉完整官方 App 安装要求。静态检查本人保留的 8.11.1023 arm64 APK：
+
+- 当前调用面为 SecurityGuardManager、IStaticDataStoreComponent、IUnifiedSecurityComponent；登录 SDK 只额外读取 SDK_VERSION。完整 UI、推送和订单页面并非当前代码直接调用的依赖。
+- libsgmain.so、libsgmiddletier.so、libsgsecuritybody.so 实际是含 classes.dex、AndroidManifest、资源表和 CERT.RSA/SF 的签名 ZIP 插件，不是普通 ELF。另有对应 6.6.230703 原生实现、版本标记和 ucb 文件。
+- 三组插件/原生实现加 yw_1222.jpg 与 yw_1222_mwua.jpg 约 3.4 MiB；这不是最终 APK 增量，未计 Java API、传递依赖、打包压缩与其它架构。不能只复制三个文件。
+- 正式加载器目前依赖 createPackageContext(com.cainiao.wireless) 的 classLoader、资源和 ApplicationInfo，并校验官方安装证书。这个证书检查是本项目的检查，不能据此声称已经证明 SDK 自身必定拒绝第三方包名/签名。
+- 尚未验证裁剪后的完整依赖闭包、独立资源上下文、原生初始化、冷启动，以及真实签名和会员续登。没有把官方代码复制进公开仓库或 Release，也没有卸载手机官方 App。
+- 后续实验应在项目隔离构建中保留插件原始字节，先验证独立加载，再验证真实只读查询及续登；成功标准必须是不通过官方已安装包获取代码/资源。正式替换前还需明确组件分发条件。
+
+减少服务依赖与减少安装依赖分开处理：手动运单已有 KuaiDi100 查询路径，本轮补入正常同步；JD/PDD/TB 各自提供订单/轨迹。菜鸟取件码、身份码与会员续登仍使用菜鸟服务，本轮未取得可替代这些服务的证据。公开实现搜索未返回可用的最小运行时实现，不能据此认定不存在。

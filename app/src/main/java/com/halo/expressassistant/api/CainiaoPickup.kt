@@ -34,7 +34,8 @@ object CainiaoPickup {
             }
         }
         val state = text(global.optJSONObject("formerModel")?.optJSONObject("status"), "statusCode")
-        if (state in setOf("SIGN", "SIGNED", "ACCEPTED", "CANCEL", "RETURN", "REJECT")) return Result(status = "completed", stationId = stationId, station = station)
+        if (state in setOf("SIGN", "SIGNED")) return Result(status = "completed", stationId = stationId, station = station)
+        if (state in setOf("CANCEL", "RETURN", "REJECT", "LOST", "FAILED")) return Result(status = "abnormal", stationId = stationId, station = station)
         if (directCode.isNotBlank()) return Result(directCode, "ok", stationId, station)
         val auth = response.optJSONObject("pickupAuth")?.optJSONObject("data")
         if (auth != null && (!auth.optBoolean("identityCodeCertificated") || !auth.optBoolean("authToGetPickupCode")))

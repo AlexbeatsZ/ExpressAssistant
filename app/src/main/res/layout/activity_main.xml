@@ -36,7 +36,7 @@
                 style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginHorizontal="16dp" android:layout_marginTop="8dp" android:layout_marginBottom="12dp"
-                android:hint="搜索商品或输入运单号"
+                android:hint="搜索商品 / 粘贴运单号添加"
                 app:boxCornerRadiusTopStart="24dp" app:boxCornerRadiusTopEnd="24dp" app:boxCornerRadiusBottomStart="24dp" app:boxCornerRadiusBottomEnd="24dp"
                 app:startIconDrawable="@drawable/ic_search" app:endIconMode="clear_text">
                 <com.google.android.material.textfield.TextInputEditText android:id="@+id/search_input" android:layout_width="match_parent" android:layout_height="wrap_content" android:singleLine="true" android:inputType="text" android:imeOptions="actionSearch" />

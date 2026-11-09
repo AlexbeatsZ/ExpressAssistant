@@ -74,9 +74,18 @@ object CainiaoPackages {
         for (pkg in packages) {
             val old = merged[pkg.mailNo] ?: merged.values.firstOrNull { it.trackingNumber == pkg.mailNo }
             if (old != null) {
-                val done = old.state in setOf(3, 4) || old.stateNum in 106..111 || pkg.state in setOf(3, 4)
-                merged[old.mailNo] = if (old.source == "cainiao") pkg.copy(tracked = old.tracked, addressId = old.addressId)
-                else old.copy(pickupCode = if (done) "" else pkg.pickupCode, station = pkg.station.ifBlank { old.station })
+                val base = if (old.source == "cainiao") pkg.copy(tracked = old.tracked, addressId = old.addressId,
+                    stateOverride = old.stateOverride, partitionOverride = old.partitionOverride) else old
+                merged[old.mailNo] = when {
+                    old.isCompleted() -> old.copy(pickupCode = "", pickupHint = "", eta = "", receiptConfirmed = true)
+                    pkg.isCompleted() -> CainiaoParcelSync.apply(base, CainiaoPickup.Result(status = "completed")).copy(
+                        latestText = pkg.latestText.ifBlank { "已签收" }, latestTime = pkg.latestTime.ifBlank { old.latestTime })
+                    pkg.state == 4 || pkg.stateNum in 108..111 -> base.copy(state = pkg.state, stateNum = pkg.stateNum,
+                        stateName = pkg.stateName, pickupCode = "", pickupHint = "", eta = "",
+                        latestText = pkg.latestText, latestTime = pkg.latestTime)
+                    else -> base.copy(pickupCode = if (old.state == 4 || old.stateNum in 108..111) "" else pkg.pickupCode,
+                        station = pkg.station.ifBlank { old.station })
+                }
             } else if (pkg.state !in setOf(3, 4)) merged[pkg.mailNo] = pkg
         }
         return merged.values.toList()

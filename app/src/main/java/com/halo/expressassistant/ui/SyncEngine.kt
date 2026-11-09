@@ -182,7 +182,9 @@ object SyncEngine {
         // （PDD 并集/各渠道重抓会把服务端仍存在的单再次带回，此前从不查隐藏名单）
         val hiddenNos = Store.xiaomiHidden(act).mapTo(HashSet()) { it.mailNo }
         val withCainiao = if (cnResult?.first != null) CainiaoPackages.merge(withTrace, cnResult.first!!) else withTrace
-        val finalSaved = (if (hiddenNos.isEmpty()) withCainiao else withCainiao.filterNot { it.mailNo in hiddenNos })
+        val withManual = com.halo.expressassistant.api.ManualPackages.refreshAll(act, withCainiao.filterNot { it.mailNo in hiddenNos })
+        val nativeChecked = com.halo.expressassistant.api.CainiaoParcelSync.refresh(act, withManual)
+        val finalSaved = nativeChecked
             .map {
                 if (it.isCompleted()) it.copy(state = 3, stateNum = 107, pickupCode = "", receiptConfirmed = true)
                 else if (it.state == 4 || it.stateNum in 108..111) it.copy(pickupCode = "") else it

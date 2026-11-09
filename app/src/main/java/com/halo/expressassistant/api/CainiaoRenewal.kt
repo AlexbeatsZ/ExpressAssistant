@@ -79,7 +79,7 @@ object CainiaoRenewal {
         }
     }
 
-    suspend fun queryParcel(ctx: Context, mailNo: String): JSONObject = withContext(Dispatchers.IO) {
+    suspend fun queryParcel(ctx: Context, mailNo: String, includePickup: Boolean = true): JSONObject = withContext(Dispatchers.IO) {
         mutex.withLock {
             val session = CainiaoSessionStore.read(ctx) ?: throw CainiaoServiceException(CainiaoServiceException.Kind.NO_SESSION)
             val renewed = renewMember(ctx, session)
@@ -88,7 +88,7 @@ object CainiaoRenewal {
             fun request(): JSONObject {
                 val response = call("mtop.cainiao.lde.detail.orderCode.mailNo.resCode.get.cn", JSONObject().put("mailNo", mailNo))
                 val initial = CainiaoPickup.parse(response, mailNo)
-                if (initial.code.isNotBlank() || initial.status in setOf("completed", "mismatch")) return response
+                if (!includePickup || initial.code.isNotBlank() || initial.status in setOf("completed", "abnormal", "mismatch")) return response
                 val station = initial.stationId
                 if (station.isNotBlank()) {
                     val auth = call("mtop.cainiao.nbpickup.pickupcode.queryauth.cn", JSONObject().put("stationId", station))

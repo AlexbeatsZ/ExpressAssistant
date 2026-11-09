@@ -54,3 +54,11 @@ Store 在读取和保存时统一用已有 PDD 最新轨迹补收货证据（单
 - 新抓取、缓存回填、列表同步共用 DetailState；取件码检索全轨迹，最新节点按时间选取，不使用 `last()` 猜顺序。已有未完成旧轨迹缓存通过 logisticsVersion 触发一次补抓，已完成历史不批量爬取。
 - 同步保留凭据/真实单号；已完成清除 code/hint/ETA。手机 `/api/pickup` 包含无常规码但存在明确取件说明的待取件记录。
 - 用户补充后接通菜鸟取码：PDD 真实单号→本人菜鸟原生详情→已授权 genericverify→同单号驿站码。pickupCode 优先显示，pickupHint 仅备用；按 trackingNumber 合并菜鸟列表而不重复生成一件。协议见 cainiao-mobile.md。
+
+## 2026-11-09 取件后状态刷新
+
+菜鸟列表合并必须把 SIGN 的终态证据写回原平台订单，而非仅清取件码；按真实 trackingNumber 匹配 PDD，保留订单键及用户配置。已完成记录不可被滞后的菜鸟列表退回待取件。
+
+普通同步对仍待取件且有真实单号的记录执行原生菜鸟状态查询，独立于淘宝 H5；已有取件码仍查询状态，但不调用 queryauth/genericverify 重取码。仅 SIGN/SIGNED 作为签收；AGENT_SIGN/ACCEPTED 不代表用户取走，RETURN/CANCEL/REJECT 等异常不记为签收。原生读取失败保留旧记录。PDD 获取取件码时若发现已签收，同样持久化 receiptConfirmed。
+
+手动件加入普通同步，识别失败或查询失败保留记录；承运商接口显示签收但最新文字为驿站代收时，保持待取件。确认本人签收后不可被旧轨迹回退。

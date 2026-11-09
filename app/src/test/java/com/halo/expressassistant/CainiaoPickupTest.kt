@@ -55,4 +55,31 @@ class CainiaoPickupTest {
         assertEquals("6-4-1234", merged.single().pickupCode)
         assertEquals("", CainiaoPackages.merge(merged, listOf(cn.copy(pickupCode = ""))).single().pickupCode)
     }
+    @Test fun signedListUpdatesOriginalAndCannotRegress() {
+        val old = ExpressItem("id", "", "韵达", "1234567890", source = "taobao", state = 0, stateName = "待取件", pickupCode = "1-2-3")
+        val signed = old.copy(source = "cainiao", state = 3, stateNum = 107, stateName = "已签收", pickupCode = "")
+        val done = CainiaoPackages.merge(listOf(old), listOf(signed)).single()
+        assertTrue(done.receiptConfirmed)
+        assertEquals("已签收", done.stateLabel())
+        assertEquals("", done.pickupCode)
+        assertTrue(CainiaoPackages.merge(listOf(done), listOf(old.copy(source = "cainiao"))).single().isCompleted())
+    }
+    @Test fun depotAcceptanceAndReturnsAreNotUserCollection() {
+        for (state in listOf("AGENT_SIGN", "ACCEPTED", "RETURN", "CANCEL", "REJECT")) {
+            val r = response()
+            r.getJSONObject("data").getJSONObject("globalData").getJSONObject("formerModel").getJSONObject("status").put("statusCode", state)
+            val result = CainiaoPickup.parse(r, "JT0000012345")
+            assertNotEquals("completed", result.status)
+        }
+    }
+    @Test fun nativeReceiptClearsHintsAndUsesRealWaybill() {
+        val old = ExpressItem("order", "PDD", "极兔", "order-key", source = "pdd", state = 0,
+            trackingNumber = "JT0000012345", pickupCode = "1-2-3", pickupHint = "末五位12345", eta = "今天送达")
+        assertEquals("JT0000012345", com.halo.expressassistant.api.CainiaoParcelSync.waybill(old))
+        val done = com.halo.expressassistant.api.CainiaoParcelSync.apply(old, CainiaoPickup.Result(status = "completed"))
+        assertTrue(done.isCompleted())
+        assertFalse(done.isAwaitingPickup())
+        assertEquals("", done.pickupCode + done.pickupHint + done.eta)
+        assertEquals("order-key", done.mailNo)
+    }
 }

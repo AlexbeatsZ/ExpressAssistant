@@ -643,7 +643,7 @@ class MainActivity : AppCompatActivity() {
         recognitionJob?.cancel()
         val mail = com.halo.expressassistant.api.ManualPackages.normalise(raw)
         pendingMailNo = ""; pendingCompany = null
-        val exists = Store.items(this).any { it.mailNo.equals(mail, true) }
+        val exists = Store.items(this).any { (it.mailNo.equals(mail, true) || it.trackingNumber.equals(mail, true)) }
         if (!com.halo.expressassistant.api.ManualPackages.isWaybill(mail) || exists) {
             binding.pendingPackage.visibility = View.GONE
             return
@@ -671,7 +671,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun submitSearch() {
         val mail = com.halo.expressassistant.api.ManualPackages.normalise(searchQuery)
-        val existing = Store.items(this).firstOrNull { it.mailNo.equals(mail, true) }
+        val existing = Store.items(this).firstOrNull { (it.mailNo.equals(mail, true) || it.trackingNumber.equals(mail, true)) }
         if (existing != null) openDetail(existing)
         else if (com.halo.expressassistant.api.ManualPackages.isWaybill(mail)) addFromSearch()
         (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(binding.searchInput.windowToken, 0)
@@ -680,12 +680,12 @@ class MainActivity : AppCompatActivity() {
     private fun addFromSearch() {
         val mail = com.halo.expressassistant.api.ManualPackages.normalise(searchQuery)
         if (!com.halo.expressassistant.api.ManualPackages.isWaybill(mail)) return
-        if (Store.items(this).any { it.mailNo.equals(mail, true) }) { reload(); return }
+        if (Store.items(this).any { (it.mailNo.equals(mail, true) || it.trackingNumber.equals(mail, true)) }) { reload(); return }
         recognitionJob?.cancel(); binding.btnAddPackage.isEnabled = false
         lifecycleScope.launch {
             try {
                 val company = if (pendingMailNo == mail && pendingCompany != null) pendingCompany else detectCompany(mail)
-                if (Store.items(this@MainActivity).none { it.mailNo.equals(mail, true) }) {
+                if (Store.items(this@MainActivity).none { (it.mailNo.equals(mail, true) || it.trackingNumber.equals(mail, true)) }) {
                     val item = ExpressItem(id = mail, mailNo = mail, companyCode = company?.comCode.orEmpty(),
                         companyName = company?.name?.ifBlank { "快递" } ?: "快递", source = "manual", state = -1,
                         stateNum = 0, stateName = "待查询", originalName = company?.name.orEmpty())

@@ -110,11 +110,13 @@ object PddTraceFetcher {
         if (mail.isBlank() || !current.isAwaitingPickup() || current.pickupCode.isNotBlank()) return
         val now = System.currentTimeMillis()
         if (now - current.pickupQueriedAt < 3600_000L) return
+        var parsed: com.halo.expressassistant.api.CainiaoPickup.Result? = null
         var code = ""
         var station = ""
         val status = try {
             val response = com.halo.expressassistant.api.CainiaoRenewal.queryParcel(act, mail)
             val result = com.halo.expressassistant.api.CainiaoPickup.parse(response, mail)
+            parsed = result
             code = result.code
             station = result.station
             result.status
@@ -122,8 +124,8 @@ object PddTraceFetcher {
         catch (e: com.halo.expressassistant.api.CainiaoServiceException) { e.kind.name.lowercase() }
         catch (_: Exception) { "unavailable" }
         Store.saveItems(act, Store.items(act).map {
-            if (it.mailNo != itemKey || it.isCompleted()) it else it.copy(
-                pickupCode = code.ifBlank { it.pickupCode },
+            if (it.mailNo != itemKey || it.isCompleted()) it else com.halo.expressassistant.api.CainiaoParcelSync.apply(it, parsed ?: com.halo.expressassistant.api.CainiaoPickup.Result()).copy(
+                pickupCode = if (status in setOf("completed", "abnormal")) "" else code.ifBlank { it.pickupCode },
                 pickupCodeSource = if (code.isNotBlank()) "cainiao" else it.pickupCodeSource,
                 station = station.ifBlank { it.station }, pickupQueryStatus = status, pickupQueriedAt = now)
         })

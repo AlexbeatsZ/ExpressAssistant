@@ -17,7 +17,8 @@ import java.util.UUID
 
 object KuaiDi100 {
     private const val MOBILE_SECRET = "L0Z1yKqPXseWi4ERAUFnxQmgHwhafITG"
-    private val client = OkHttpClient.Builder().build()
+    private val client = OkHttpClient.Builder().connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(12, java.util.concurrent.TimeUnit.SECONDS).callTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()
     private val json = Json { ignoreUnknownKeys = true }
 
     data class Company(val comCode: String, val name: String)
