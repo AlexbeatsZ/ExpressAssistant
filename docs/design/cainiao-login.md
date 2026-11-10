@@ -118,3 +118,9 @@ UserLoginServiceImpl 构造 mtop.taobao.mloginService.smsSend / smsLogin 1.0。l
 实际落地：在线身份码与强制材料刷新改为直接H5读取，只有明确LOGIN_EXPIRED才原生续登并重试一次。网络失败/请求拒绝不触发续登。后台仍尝试提前续登，但其失败不再阻断已有有效离线材料或H5刷新。原生会员续登/包裹取件码仍需现有运行时；此改动是减少使用依赖，不是移除安装依赖。
 
 正式v0.9.9验证：60单测、lint与release签名通过；K70 online和材料刷新均200，lastSessionRenewedAtMs保持原值，证明本次没有预先原生续登；随后显式session/refresh200并推进session/refresh期限。203件、JD/TB/PDD各1账号保留。正式APK归档检查无security-runtime/source-runtime/yw_1222实验资源，手机临时目录在清理版启动时定向移除，最终安装版不留实验入口。
+
+## 2026-11-10 K70 当前会话恢复与 Root 读取试验
+
+- 官方菜鸟已升级至 8.11.1105，证书仍匹配。Root 可读取官方 `session/session_key`，它由 SecurityGuard 的 `dynamicDecryptDDp` 加密。独立上下文下同一接口返回 SecException 472，使用官方 UID 及隔离的安全运行时数据副本也未通过。Root 文件访问权限与成功解密需分别验证。
+- 用户执行官方登录与出码后，短期日志没有找到完整会员令牌，能按官方 UID 取得新身份请求 Cookie 和匹配的账号。用 H5 验证在线码与离线材料、确认原身份索引一致后，手动恢复到快递助手。使用原来同一账号的会员续登凭证和原设备参数，快递助手原生续登返回成功，说明 8.11.1105 的签名运行时在当前设备可用。
+- 用户要求暂停登录研究，正式版移除 Root 读取与日志接收试验入口。手机已有加密会话继续自动续登。全新安装的自助首次登录仍待实现。

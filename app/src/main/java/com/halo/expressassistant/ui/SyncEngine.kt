@@ -6,6 +6,7 @@ import android.util.Log
 import com.halo.expressassistant.api.EtaParser
 import com.halo.expressassistant.api.TbOrders
 import com.halo.expressassistant.api.CainiaoPackages
+import com.halo.expressassistant.api.ManualPackages
 import com.halo.expressassistant.api.XiaomiSync
 import com.halo.expressassistant.data.ExpressItem
 import com.halo.expressassistant.data.JdGoods
@@ -182,16 +183,19 @@ object SyncEngine {
         // （PDD 并集/各渠道重抓会把服务端仍存在的单再次带回，此前从不查隐藏名单）
         val hiddenNos = Store.xiaomiHidden(act).mapTo(HashSet()) { it.mailNo }
         val withCainiao = if (cnResult?.first != null) CainiaoPackages.merge(withTrace, cnResult.first!!) else withTrace
-        val withManual = com.halo.expressassistant.api.ManualPackages.refreshAll(act, withCainiao.filterNot { it.mailNo in hiddenNos })
+        val withManual = ManualPackages.refreshAll(act, withCainiao.filterNot { it.mailNo in hiddenNos })
         val nativeChecked = com.halo.expressassistant.api.CainiaoParcelSync.refresh(act, withManual)
         val finalSaved = nativeChecked
             .map {
                 if (it.isCompleted()) it.copy(state = 3, stateNum = 107, pickupCode = "", receiptConfirmed = true)
                 else if (it.state == 4 || it.stateNum in 108..111) it.copy(pickupCode = "") else it
             }
-        Store.saveItems(act, finalSaved)
-        Log.i(TAG, "merged total=${finalSaved.size} statuses=$statuses")
-        Report(statuses, finalSaved.size)
+        val saved = Store.updateItems(act) { current ->
+            val hidden = Store.xiaomiHidden(act).mapTo(HashSet()) { it.mailNo }
+            ManualPackages.retainManualEdits(oldItems, finalSaved, current).filterNot { it.mailNo in hidden }
+        }
+        Log.i(TAG, "merged total=${saved.size} statuses=$statuses")
+        Report(statuses, saved.size)
     }
 
     /** 后台任务：商品短名批量优化（不阻塞同步）；每小批完成即落库并回调 onBatch（渐进式外显，建议 reload） */

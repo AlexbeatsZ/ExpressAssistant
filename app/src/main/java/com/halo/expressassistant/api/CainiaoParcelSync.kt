@@ -24,7 +24,7 @@ object CainiaoParcelSync {
         if (!CainiaoRenewal.snapshot(ctx).canAutoRenew) return items
         return items.map { item ->
             val mail = waybill(item)
-            if (!item.isAwaitingPickup() || mail.isBlank()) return@map item
+            if (item.source == "manual" || !item.isAwaitingPickup() || mail.isBlank()) return@map item
             try {
                 val response = CainiaoRenewal.queryParcel(ctx, mail, includePickup = false)
                 apply(item, CainiaoPickup.parse(response, mail))

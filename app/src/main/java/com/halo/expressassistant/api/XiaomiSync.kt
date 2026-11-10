@@ -80,28 +80,29 @@ object XiaomiSync {
         }
         val hidden = Store.xiaomiHidden(context).map { it.mailNo }.toSet()
         incoming.removeAll { it.mailNo in hidden }
-        val existing = Store.items(context).toMutableList()
-        for (item in incoming) {
-            val old = existing.firstOrNull { it.mailNo == item.mailNo }
-            val merged = if (old != null) {
-                item.copy(
-                    eta = if (item.eta.isBlank() && old.eta.isNotBlank()) old.eta else item.eta,
-                    tracked = old.tracked,
-                    companyName = old.companyName,
-                    originalName = old.originalName,
-                    notifiedText = old.notifiedText,
-                    notifiedTime = old.notifiedTime,
-                    stateOverride = old.stateOverride,
-                    partitionOverride = old.partitionOverride,
-                    jumpLinks = if (item.jumpLinks.isBlank()) old.jumpLinks else item.jumpLinks
-                )
-            } else {
-                item
+        Store.updateItems(context) { current ->
+            val existing = current.toMutableList()
+            for (item in incoming) {
+                val idx = existing.indexOfFirst { it.mailNo == item.mailNo }
+                if (idx < 0) {
+                    existing.add(item)
+                } else {
+                    val old = existing[idx]
+                    existing[idx] = item.copy(
+                        eta = item.eta.ifBlank { old.eta },
+                        tracked = old.tracked,
+                        companyName = old.companyName,
+                        originalName = old.originalName,
+                        notifiedText = old.notifiedText,
+                        notifiedTime = old.notifiedTime,
+                        stateOverride = old.stateOverride,
+                        partitionOverride = old.partitionOverride,
+                        jumpLinks = item.jumpLinks.ifBlank { old.jumpLinks }
+                    )
+                }
             }
-            val idx = existing.indexOfFirst { it.mailNo == item.mailNo }
-            if (idx >= 0) existing[idx] = merged else existing.add(merged)
+            existing
         }
-        Store.saveItems(context, existing)
         "同步成功，共 ${incoming.size} 个快递"
     }
 

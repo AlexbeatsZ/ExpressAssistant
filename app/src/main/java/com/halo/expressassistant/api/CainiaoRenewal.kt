@@ -89,12 +89,17 @@ object CainiaoRenewal {
                 if (!includePickup || initial.code.isNotBlank() || initial.status in setOf("completed", "abnormal", "mismatch")) return response
                 val station = initial.stationId
                 if (station.isNotBlank()) {
-                    val auth = call("mtop.cainiao.nbpickup.pickupcode.queryauth.cn", JSONObject().put("stationId", station))
-                    response.put("pickupAuth", auth)
-                    val state = auth.optJSONObject("data")
-                    if (state?.optBoolean("identityCodeCertificated") == true && state.optBoolean("authToGetPickupCode")) {
-                        response.put("pickupResult", call("mtop.cainiao.nbpickup.pickupcode.genericverify.cn",
-                            JSONObject().put("stationId", station).put("queryContent", mailNo)))
+                    try {
+                        val auth = call("mtop.cainiao.nbpickup.pickupcode.queryauth.cn", JSONObject().put("stationId", station))
+                        response.put("pickupAuth", auth)
+                        val state = auth.optJSONObject("data")
+                        if (state?.optBoolean("identityCodeCertificated") == true && state.optBoolean("authToGetPickupCode")) {
+                            response.put("pickupResult", call("mtop.cainiao.nbpickup.pickupcode.genericverify.cn",
+                                JSONObject().put("stationId", station).put("queryContent", mailNo)))
+                        }
+                    } catch (e: CainiaoServiceException) {
+                        if (e.kind == CainiaoServiceException.Kind.LOGIN_EXPIRED) throw e
+                        // A pickup lookup can fail after the waybill's logistics data has arrived.
                     }
                 }
                 return response

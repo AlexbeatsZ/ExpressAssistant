@@ -58,7 +58,7 @@ object Store {
 
     val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    fun items(context: Context): List<ExpressItem> {
+    @Synchronized fun items(context: Context): List<ExpressItem> {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val raw = prefs.getString(KEY_LIST, null)
             ?: return seed().also { saveItems(context, it) }
@@ -73,12 +73,19 @@ object Store {
         }
     }
 
-    fun saveItems(context: Context, items: List<ExpressItem>) {
+    @Synchronized fun saveItems(context: Context, items: List<ExpressItem>) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit {
             putString(KEY_LIST, json.encodeToString(reconcileItems(prefs, items)))
         }
         com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(context)
+    }
+
+    @Synchronized fun updateItems(context: Context, update: (List<ExpressItem>) -> List<ExpressItem>): List<ExpressItem> {
+        val previous = items(context)
+        val next = update(previous)
+        if (next != previous) saveItems(context, next)
+        return next
     }
 
     fun seed(): List<ExpressItem> = emptyList()

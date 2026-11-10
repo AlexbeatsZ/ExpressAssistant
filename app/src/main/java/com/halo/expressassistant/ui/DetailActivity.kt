@@ -134,7 +134,9 @@ class DetailActivity : AppCompatActivity() {
                 var detail = if (item.orderOnly) ExpressDetail(item.mailNo, item.companyName, item.state, false) else when (item.source) {
                     "manual" -> {
                         val cached = Store.manualTraces(this@DetailActivity, item.mailNo)
-                        if (cached != null) ExpressDetail(item.mailNo, item.companyName, item.state, item.isCompleted(), cached, item.eta)
+                        val refreshForCainiao = !item.isCompleted() && item.pickupQueryStatus in setOf("", "no_session", "login_expired") &&
+                            com.halo.expressassistant.api.CainiaoRenewal.snapshot(this@DetailActivity).canAutoRenew
+                        if (cached != null && !refreshForCainiao) ExpressDetail(item.mailNo, item.companyName, item.state, item.isCompleted(), cached, item.eta)
                         else com.halo.expressassistant.api.ManualPackages.refresh(this@DetailActivity, item)
                     }
                     "jd" -> {
@@ -223,7 +225,7 @@ class DetailActivity : AppCompatActivity() {
                     detail = KuaiDi100.fetchDetail(this@DetailActivity, item)
                 }
                 val current = Store.items(this@DetailActivity).firstOrNull { it.mailNo == item.mailNo } ?: item
-                val reconciled = DetailState.reconcile(current, detail)
+                val reconciled = if (current.source == "manual") current else DetailState.reconcile(current, detail)
                 if (reconciled != current) {
                     Store.saveItems(this@DetailActivity, Store.items(this@DetailActivity).map {
                         if (it.mailNo == reconciled.mailNo) reconciled else it

@@ -37,6 +37,7 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import com.halo.expressassistant.TrackingNotifier
 import com.halo.expressassistant.api.KuaiDi100
+import com.halo.expressassistant.api.ManualPackages
 import com.halo.expressassistant.api.XiaomiApi
 import com.halo.expressassistant.api.XiaomiSync
 import com.halo.expressassistant.data.ExpressDetail
@@ -85,7 +86,7 @@ class MainActivity : AppCompatActivity() {
         binding.list.adapter = adapter
         binding.swipeRefresh.setOnChildScrollUpCallback { _, _ -> binding.list.canScrollVertically(-1) }
         binding.swipeRefresh.setOnRefreshListener {
-            if (Store.hasAnyAccount(this)) syncAll()
+            if (Store.hasAnyAccount(this) || Store.items(this).any { it.source == "manual" }) syncAll()
             else { binding.swipeRefresh.isRefreshing = false; Toast.makeText(this, "请先登录账号", Toast.LENGTH_SHORT).show() }
         }
         identityPanel = IdentityPanel(this)
@@ -190,8 +191,10 @@ class MainActivity : AppCompatActivity() {
         val all = Store.items(this)
         val goods = Store.jdGoods(this)
         val q = searchQuery.lowercase()
+        val waybill = ManualPackages.normalise(q)
         val rows = if (q.isBlank()) all else all.filter { item ->
-            listOf(item.mailNo, item.companyName, item.latestText, item.pickupCode, item.pickupHint, item.trackingNumber, goods[item.mailNo]?.name.orEmpty()).any { it.lowercase().contains(q) }
+            ManualPackages.matches(item, waybill) ||
+                listOf(item.mailNo, item.companyName, item.latestText, item.pickupCode, item.pickupHint, item.trackingNumber, goods[item.mailNo]?.name.orEmpty()).any { it.lowercase().contains(q) }
         }
         adapter.setSearchMode(q.isNotBlank()); adapter.submit(rows)
         val empty = if (q.isNotBlank()) rows.isEmpty() else rows.none { isTransportItem(it) }
@@ -641,10 +644,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun recogniseInput(raw: String) {
         recognitionJob?.cancel()
-        val mail = com.halo.expressassistant.api.ManualPackages.normalise(raw)
+        val mail = ManualPackages.normalise(raw)
         pendingMailNo = ""; pendingCompany = null
-        val exists = Store.items(this).any { (it.mailNo.equals(mail, true) || it.trackingNumber.equals(mail, true)) }
-        if (!com.halo.expressassistant.api.ManualPackages.isWaybill(mail) || exists) {
+        val exists = Store.items(this).any { ManualPackages.matches(it, mail) }
+        if (!ManualPackages.isWaybill(mail) || exists) {
             binding.pendingPackage.visibility = View.GONE
             return
         }
@@ -653,7 +656,7 @@ class MainActivity : AppCompatActivity() {
         recognitionJob = lifecycleScope.launch {
             kotlinx.coroutines.delay(500)
             val company = detectCompany(mail)
-            if (com.halo.expressassistant.api.ManualPackages.normalise(searchQuery) != mail) return@launch
+            if (ManualPackages.normalise(searchQuery) != mail) return@launch
             pendingMailNo = mail; pendingCompany = company
             binding.pendingLabel.text = "${company?.name?.ifBlank { "快递" } ?: "快递公司待识别"} · $mail"
         }
@@ -670,33 +673,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun submitSearch() {
-        val mail = com.halo.expressassistant.api.ManualPackages.normalise(searchQuery)
-        val existing = Store.items(this).firstOrNull { (it.mailNo.equals(mail, true) || it.trackingNumber.equals(mail, true)) }
+        val mail = ManualPackages.normalise(searchQuery)
+        val existing = Store.items(this).firstOrNull { ManualPackages.matches(it, mail) }
         if (existing != null) openDetail(existing)
-        else if (com.halo.expressassistant.api.ManualPackages.isWaybill(mail)) addFromSearch()
+        else if (ManualPackages.isWaybill(mail)) addFromSearch()
         (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(binding.searchInput.windowToken, 0)
     }
 
     private fun addFromSearch() {
-        val mail = com.halo.expressassistant.api.ManualPackages.normalise(searchQuery)
-        if (!com.halo.expressassistant.api.ManualPackages.isWaybill(mail)) return
-        if (Store.items(this).any { (it.mailNo.equals(mail, true) || it.trackingNumber.equals(mail, true)) }) { reload(); return }
-        recognitionJob?.cancel(); binding.btnAddPackage.isEnabled = false
+        val mail = ManualPackages.normalise(searchQuery)
+        if (!ManualPackages.isWaybill(mail)) return
+        recognitionJob?.cancel()
+        val item = ManualPackages.add(this, mail, pendingCompany.takeIf { pendingMailNo == mail })
+        binding.pendingPackage.visibility = View.GONE
+        binding.searchInput.setText(mail)
+        binding.searchInput.clearFocus()
+        (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+            .hideSoftInputFromWindow(binding.searchInput.windowToken, 0)
+        reload()
+        if (item.source != "manual") return
+        Toast.makeText(this, "已添加到快递列表", Toast.LENGTH_SHORT).show()
         lifecycleScope.launch {
             try {
-                val company = if (pendingMailNo == mail && pendingCompany != null) pendingCompany else detectCompany(mail)
-                if (Store.items(this@MainActivity).none { (it.mailNo.equals(mail, true) || it.trackingNumber.equals(mail, true)) }) {
-                    val item = ExpressItem(id = mail, mailNo = mail, companyCode = company?.comCode.orEmpty(),
-                        companyName = company?.name?.ifBlank { "快递" } ?: "快递", source = "manual", state = -1,
-                        stateNum = 0, stateName = "待查询", originalName = company?.name.orEmpty())
-                    Store.saveItems(this@MainActivity, Store.items(this@MainActivity) + item)
-                    Store.restoreHidden(this@MainActivity, mail)
-                    binding.searchInput.setText(""); reload()
-                    Toast.makeText(this@MainActivity, "已添加", Toast.LENGTH_SHORT).show()
-                    withContext(Dispatchers.IO) { runCatching { com.halo.expressassistant.api.ManualPackages.refresh(this@MainActivity, item) } }
-                    reload()
-                }
-            } finally { binding.btnAddPackage.isEnabled = true }
+                withContext(Dispatchers.IO) { ManualPackages.refresh(this@MainActivity, item) }
+                reload()
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { /* Keep the saved package available for retry. */ }
         }
     }
 
@@ -1050,9 +1052,10 @@ class MainActivity : AppCompatActivity() {
             .setTitle("移除快递")
             .setMessage("将 ${item.companyName}（${item.mailNo}）移除？可在设置里的“删除快递”中恢复。")
             .setPositiveButton("移除") { _, _ ->
-                val all = Store.items(this)
-                Store.addHidden(this, item)
-                Store.saveItems(this, all.filterNot { it.mailNo == item.mailNo })
+                Store.updateItems(this) { all ->
+                    Store.addHidden(this, item)
+                    all.filterNot { it.mailNo == item.mailNo }
+                }
                 reload()
             }
             .setNegativeButton("取消", null)
