@@ -5,6 +5,8 @@ import com.halo.expressassistant.data.CainiaoSessionStore
 import com.halo.expressassistant.data.PhoneProvisioning
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -113,6 +115,35 @@ object CainiaoRenewal {
 
     suspend fun importConfiguration(ctx: Context, raw: String): String = withContext(Dispatchers.IO) {
         mutex.withLock { PhoneProvisioning.import(ctx, raw) }
+    }
+
+    internal suspend fun acceptCapturedLogin(ctx: Context, candidate: CainiaoLoginLog.Candidate) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val existing = if (candidate.hasCapturedMember) null else CainiaoSessionStore.read(ctx)
+            val member = if (candidate.hasCapturedMember) candidate.member else {
+                val current = checkNotNull(existing?.optJSONObject("member"))
+                check(current.optString("cnAccountId") == candidate.member.optString("cnAccountId"))
+                current
+            }
+            val device = existing?.optJSONObject("native") ?: candidate.device
+            CainiaoMember.validate(member)
+            check(CainiaoMember.canRenew(member))
+            CainiaoMember.validateNative(device)
+            val http = H5Mtop(candidate.cookie)
+            val online = CainiaoIdentity.parseOnline(http.call("mtop.cainiao.nbpickup.identitycode.get.cn",
+                JSONObject().put("appName", "GUOGUO").put("verifyVersion", "V2")).getJSONObject("model"))
+            val type = online.value.last().toString()
+            val material = http.call("mtop.cainiao.nbpickup.native.identitycode.get.cn",
+                JSONObject().put("channel", "GUOGUO").put("codeType", type).put("verifyVersion", "V2"))
+                .getJSONObject("model").put("codeType", type)
+            check(CainiaoIdentity.parse(material).expiresAtMs > System.currentTimeMillis())
+            val now = System.currentTimeMillis()
+            val session = JSONObject().put("cookie", http.cookieHeader).put("member", member).put("native", device)
+                .put("material", material).put("online", JSONObject().put("code", online.value).put("expiresAtMs", online.expiresAtMs))
+                .put("lastOnlineRefreshedAtMs", now).put("lastRefreshedAtMs", now).put("lastRefreshAttemptAtMs", now)
+            currentCoroutineContext().ensureActive()
+            CainiaoSessionStore.save(ctx, session)
+        }
     }
 
     suspend fun renewSession(ctx: Context): Boolean = withContext(Dispatchers.IO) {

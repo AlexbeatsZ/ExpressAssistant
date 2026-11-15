@@ -398,7 +398,7 @@ class ExpressWidgetProvider : AppWidgetProvider() {
             val inTransit = items.sortedBy { orderOf(it) }.firstOrNull {
                 sectionKeyOf(it) in setOf("pickup", "delivering", "shipped", "notshipped")
             }
-            if (inTransit == null) return "点击打开快递助手"
+            if (inTransit == null) return "点击打开快递"
             val eta = etaBody(inTransit.etaLabel())
             return if (eta.isNotBlank()) {
                 // eta 本身多半自带"预计"，这里去前缀再拼，避免"预计 预计今天送达"

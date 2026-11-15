@@ -22,7 +22,7 @@ import com.google.android.material.color.MaterialColors
 import com.halo.expressassistant.data.Store
 
 /**
- * 云雀内置浏览器：打开原平台订单页 + 通用网页浏览。
+ * 内置浏览器：打开原平台订单页 + 通用网页浏览。
  * 登录态策略（为什么不会反复要求登录）：
  *  1. 启动时把「账号 Cookie（同步回存的）+ Cookie 罐（上次浏览结束时的页面会话）」注入 WebView；
  *  2. 每次页面加载完把当前渠道的全部 Cookie 收进罐里持久化（session cookie 本来活不过进程被杀，

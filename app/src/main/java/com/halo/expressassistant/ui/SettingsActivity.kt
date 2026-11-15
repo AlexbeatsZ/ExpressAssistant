@@ -136,25 +136,6 @@ class SettingsActivity : AppCompatActivity() {
         sheet.show()
     }
 
-    /** 清除小米域 WebView Cookie（被 removeAllCookies 取代；保留兼容引用） */
-    private fun clearXiaomiCookies() {
-        val cm = android.webkit.CookieManager.getInstance()
-        for (host in listOf(
-            "https://account.xiaomi.com",
-            "https://api.assistant.miui.com",
-            "https://i.mi.com",
-            "https://passport.xiaomi.com"
-        )) {
-            val cookie = cm.getCookie(host) ?: continue
-            for (part in cookie.split(";")) {
-                val k = part.trim().split("=", limit = 2).getOrNull(0)?.trim() ?: continue
-                if (k.isEmpty()) continue
-                cm.setCookie(host, "$k=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/")
-            }
-        }
-        cm.flush()
-    }
-
     private fun addressSummaryLabel(): String {
         val list = Store.addresses(this)
         if (list.isEmpty()) return "未设置"
@@ -253,12 +234,12 @@ class SettingsActivity : AppCompatActivity() {
         sheet.show()
     }
 
-    /* ─────────────── 关于云雀 ─────────────── */
+    /* ─────────────── 关于 ─────────────── */
 
     private fun showAboutSheet() {
-        val (sheet, container) = Sheets.create(this, "关于快递助手")
+        val (sheet, container) = Sheets.create(this, "关于快递")
         container.addView(TextView(this).apply {
-            text = "快递助手 v${UpdateChecker.versionName(this@SettingsActivity)}\nAlexbeatsZ/ExpressAssistant"
+            text = "快递 v${UpdateChecker.versionName(this@SettingsActivity)}\nAlexbeatsZ/ExpressAssistant"
             textSize = 16f
             setPadding(0, dp(12), 0, dp(20))
         })

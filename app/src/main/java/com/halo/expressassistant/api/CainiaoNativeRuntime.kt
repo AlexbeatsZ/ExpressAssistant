@@ -10,7 +10,7 @@ import java.security.MessageDigest
 
 /** Uses the user's installed, signed official runtime; its code is never redistributed. */
 internal object CainiaoNativeRuntime {
-    private const val PACKAGE = "com.cainiao.wireless"
+    const val PACKAGE = "com.cainiao.wireless"
     private const val CERTIFICATE = "83f9f14c3432915c85c833915fe5f2db6de31c4ceb3bc92e33d341a527dbacdc"
     private class Engine(val component: Any, val api: Class<*>, val sdkVersion: String)
     @Volatile private var cached: Engine? = null
@@ -32,14 +32,23 @@ internal object CainiaoNativeRuntime {
     }
 
     @Suppress("DEPRECATION")
-    @Synchronized private fun engine(ctx: Context): Engine {
-        cached?.let { return it }
+    fun verifiedPackage(ctx: Context): android.content.pm.PackageInfo {
         try {
             val info = ctx.packageManager.getPackageInfo(PACKAGE, PackageManager.GET_SIGNATURES)
             check(info.signatures?.any { signature ->
                 MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
                     .joinToString("") { "%02x".format(it) } == CERTIFICATE
             } == true)
+            return info
+        } catch (_: Exception) {
+            throw CainiaoServiceException(CainiaoServiceException.Kind.AUTH_RUNTIME_UNAVAILABLE)
+        }
+    }
+
+    @Synchronized private fun engine(ctx: Context): Engine {
+        cached?.let { return it }
+        try {
+            verifiedPackage(ctx)
             val official = ctx.createPackageContext(PACKAGE, Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY)
             val context = StorageContext(official, ctx.applicationContext, File(ctx.noBackupFilesDir, "cainiao-native-runtime").apply { mkdirs() })
             val loader = official.classLoader
