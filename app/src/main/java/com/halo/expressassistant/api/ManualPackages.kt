@@ -12,19 +12,21 @@ object ManualPackages {
 
     fun isWaybill(input: String): Boolean {
         val value = normalise(input)
-        return value.matches(Regex("[A-Z0-9]{8,32}")) && value.count(Char::isDigit) >= 8
+        return WaybillRules.isValid(value)
     }
 
     fun matches(item: ExpressItem, waybill: String): Boolean =
         waybill.isNotEmpty() && (item.mailNo.equals(waybill, true) || item.trackingNumber.equals(waybill, true))
 
-    fun add(ctx: Context, waybill: String, company: KuaiDi100.Company?): ExpressItem {
+    fun add(ctx: Context, waybill: String, company: KuaiDi100.Company?, restoreHidden: Boolean = true): ExpressItem {
+        require(isWaybill(waybill)) { "运单号格式不符合规则" }
         val item = ExpressItem(id = waybill, mailNo = waybill, companyCode = company?.comCode.orEmpty(),
             companyName = company?.name.orEmpty().ifBlank { "快递" }, source = "manual", state = -1,
             stateNum = 0, stateName = "待查询")
         var result = item
         Store.updateItems(ctx) { current ->
             val existing = current.firstOrNull { matches(it, waybill) }
+                ?: Store.xiaomiHidden(ctx).firstOrNull { !restoreHidden && matches(it, waybill) }
             if (existing != null) {
                 result = existing
                 current

@@ -25,6 +25,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.TextInputLayout
 import com.halo.expressassistant.R
+import com.halo.expressassistant.PackageAutoImport
 import com.halo.expressassistant.api.XiaomiApi
 import com.halo.expressassistant.data.Store
 import com.halo.expressassistant.databinding.ActivitySettingsBinding
@@ -39,6 +40,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivitySettingsBinding
     private var addressInput: EditText? = null
+    private var smsImportStatus: TextView? = null
     private val requestXiaomi = 100
     private val requestJd = 101
     private val requestTb = 102
@@ -53,6 +55,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.toolbar.setNavigationOnClickListener { finish() }
 
         binding.rowAddress.setOnClickListener { showAddressSheet() }
+        binding.rowAutoImport.setOnClickListener { showAutoImportSheet() }
         binding.rowXiaomiLogin.setOnClickListener { showXiaomiSheet() }
         binding.rowJdLogin.setOnClickListener { showJdSheet() }
         binding.rowTbLogin.setOnClickListener { showTbSheet() }
@@ -73,6 +76,8 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun refreshButtons() {
+        binding.autoImportSummary.text = "短信${if (PackageAutoImport.smsEnabled(this) && PackageAutoImport.hasSmsPermission(this)) "已开启" else "未开启"} · 剪贴板${if (PackageAutoImport.clipboardEnabled(this)) "已开启" else "已关闭"}"
+        smsImportStatus?.text = smsPermissionSummary()
         binding.xiaomiLoginSummary.text = accountSummary(Store.CH_XIAOMI, "小米")
         binding.jdLoginSummary.text = accountSummary(Store.CH_JD, "京东")
         binding.tbLoginSummary.text = accountSummary(Store.CH_TAOBAO, "淘宝")
@@ -81,6 +86,54 @@ class SettingsActivity : AppCompatActivity() {
         val poll = Store.pollIntervalMin(this)
         binding.pollSummary.text = if (poll <= 0) "默认关闭" else "每 $poll 分钟 · 仅轮询有在途跟踪件的平台"
         binding.addressSummary.text = addressSummaryLabel()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshButtons()
+        PackageAutoImport.scanSms(this)
+    }
+
+    private fun smsPermissionSummary(): String =
+        if (PackageAutoImport.hasSmsPermission(this)) "自动识别收件箱中的快递运单号，并导入新到短信中的运单。"
+        else "需要短信权限才能读取快递短信。"
+
+    private fun showAutoImportSheet() {
+        val (sheet, container) = Sheets.create(this, "自动导入")
+        container.addView(SwitchMaterial(this).apply {
+            text = "短信中的运单号"
+            isChecked = PackageAutoImport.smsEnabled(this@SettingsActivity)
+            setOnCheckedChangeListener { _, checked ->
+                PackageAutoImport.setSmsEnabled(this@SettingsActivity, checked)
+                if (checked && !PackageAutoImport.hasSmsPermission(this@SettingsActivity)) {
+                    requestPermissions(PackageAutoImport.smsPermissions, 3002)
+                }
+                refreshButtons()
+            }
+        })
+        smsImportStatus = TextView(this).apply {
+            text = smsPermissionSummary()
+            textSize = 13f
+            setTextColor(onSurfaceVariant())
+            setPadding(0, dp(4), 0, dp(12))
+        }
+        container.addView(smsImportStatus)
+        container.addView(MaterialButton(this).apply {
+            text = "短信权限设置"
+            setOnClickListener {
+                startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }
+        })
+        container.addView(SwitchMaterial(this).apply {
+            text = "回到前台时导入剪贴板运单号"
+            isChecked = PackageAutoImport.clipboardEnabled(this@SettingsActivity)
+            setOnCheckedChangeListener { _, checked ->
+                PackageAutoImport.setClipboardEnabled(this@SettingsActivity, checked)
+                refreshButtons()
+            }
+        })
+        sheet.setOnDismissListener { smsImportStatus = null }
+        sheet.show()
     }
 
     /** 清除小米域 WebView Cookie（被 removeAllCookies 取代；保留兼容引用） */
@@ -752,6 +805,10 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 3002) {
+            PackageAutoImport.scanSms(this)
+            refreshButtons()
+        }
         if (requestCode == REQUEST_LOCATION) {
             val input = addressInput ?: return
             locateAddress(input) {

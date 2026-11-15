@@ -36,21 +36,49 @@ class App : Application() {
         )
         // 记录当前前台 Activity：小组件刷新等后台入口需要 Activity 上下文跑四源同步
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            private var startedActivities = 0
+            private var readClipboardOnFocus = false
+            private val focusListeners = mutableMapOf<Activity, android.view.ViewTreeObserver.OnWindowFocusChangeListener>()
+
             override fun onActivityResumed(activity: Activity) {
                 topActivity = activity
+                activity.window.decorView.post { checkClipboard(activity) }
             }
 
             override fun onActivityPaused(activity: Activity) {
                 if (topActivity === activity) topActivity = null
             }
 
-            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+                val listener = android.view.ViewTreeObserver.OnWindowFocusChangeListener { focused ->
+                    if (focused) checkClipboard(activity)
+                }
+                focusListeners[activity] = listener
+                activity.window.decorView.viewTreeObserver.addOnWindowFocusChangeListener(listener)
+            }
 
-            override fun onActivityStarted(activity: Activity) {}
+            override fun onActivityStarted(activity: Activity) {
+                if (startedActivities++ == 0) {
+                    readClipboardOnFocus = true
+                    PackageAutoImport.scanSms(activity)
+                    PackageAutoImport.resumePendingLookups(activity)
+                }
+            }
 
-            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) { startedActivities-- }
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-            override fun onActivityDestroyed(activity: Activity) {}
+            override fun onActivityDestroyed(activity: Activity) {
+                focusListeners.remove(activity)?.let {
+                    activity.window.decorView.viewTreeObserver.removeOnWindowFocusChangeListener(it)
+                }
+            }
+
+            private fun checkClipboard(activity: Activity) {
+                if (readClipboardOnFocus && topActivity === activity && activity.hasWindowFocus()) {
+                    readClipboardOnFocus = false
+                    PackageAutoImport.readClipboard(activity)
+                }
+            }
         })
     }
 

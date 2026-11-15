@@ -73,6 +73,9 @@ class MainActivity : AppCompatActivity() {
     private var recognitionJob: kotlinx.coroutines.Job? = null
     private var pendingMailNo = ""
     private var pendingCompany: KuaiDi100.Company? = null
+    private val storeChanges = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "items") runOnUiThread { reload() }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         Themes.apply(this)
@@ -80,7 +83,9 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         EdgeToEdge.apply(this, binding.root)
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3001)
+        val permissions = com.halo.expressassistant.PackageAutoImport.initialPermissions(this).toMutableList()
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) permissions += Manifest.permission.POST_NOTIFICATIONS
+        if (permissions.isNotEmpty()) requestPermissions(permissions.toTypedArray(), 3001)
         adapter = ExpressAdapter(onClick = { openDetail(it) }, onLongClick = { showPackageSheet(it) })
         binding.list.layoutManager = LinearLayoutManager(this)
         binding.list.adapter = adapter
@@ -175,6 +180,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        getSharedPreferences("express_store", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(storeChanges)
         reload()
         if (selectedTab == com.halo.expressassistant.R.id.nav_identity) identityPanel.show()
         com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(this)
@@ -182,8 +188,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        getSharedPreferences("express_store", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(storeChanges)
         identityPanel.hide()
         super.onPause()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 3001) com.halo.expressassistant.PackageAutoImport.scanSms(this)
     }
 
     /** 首页显示在途；搜索包含历史，工具栏可打开完成/异常列表。 */
@@ -682,7 +694,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun addFromSearch() {
         val mail = ManualPackages.normalise(searchQuery)
-        if (!ManualPackages.isWaybill(mail)) return
+        if (!ManualPackages.isWaybill(mail)) {
+            Toast.makeText(this, "运单号需为12～17位字母、数字或短横线，至少6位数字且最多6位非数字", Toast.LENGTH_LONG).show()
+            return
+        }
         recognitionJob?.cancel()
         val item = ManualPackages.add(this, mail, pendingCompany.takeIf { pendingMailNo == mail })
         binding.pendingPackage.visibility = View.GONE
@@ -693,13 +708,7 @@ class MainActivity : AppCompatActivity() {
         reload()
         if (item.source != "manual") return
         Toast.makeText(this, "已添加到快递列表", Toast.LENGTH_SHORT).show()
-        lifecycleScope.launch {
-            try {
-                withContext(Dispatchers.IO) { ManualPackages.refresh(this@MainActivity, item) }
-                reload()
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { /* Keep the saved package available for retry. */ }
-        }
+        com.halo.expressassistant.PackageAutoImport.enqueueLookup(this, item.mailNo)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
