@@ -14,3 +14,5 @@ Use existing Material/AndroidX components, large page titles, semantic surface c
 - Settings sections: 账号与同步, 快递管理, 使用偏好, 关于. Preserve every row and summary binding and interaction.
 - Home title 32sp; maintain existing fixed navigation, dynamic color and import logic.
 - Keep upstream attribution and license information in the About screen.
+
+2026-11-16: 菜鸟登录加入账号与同步。默认包内手机号登录，旧 Root 获取是该设置下的可选连接方式；身份码页仅保留出码和刷新。

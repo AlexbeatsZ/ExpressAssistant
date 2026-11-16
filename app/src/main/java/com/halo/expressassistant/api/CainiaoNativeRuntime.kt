@@ -7,8 +7,9 @@ import android.content.pm.PackageManager
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
+import com.halo.expressassistant.embedded.HostedCainiao
 
-/** Uses the user's installed, signed official runtime; its code is never redistributed. */
+/** Uses the integrated runtime, with the installed loader retained for legacy development builds. */
 internal object CainiaoNativeRuntime {
     const val PACKAGE = "com.cainiao.wireless"
     private const val CERTIFICATE = "83f9f14c3432915c85c833915fe5f2db6de31c4ceb3bc92e33d341a527dbacdc"
@@ -48,10 +49,12 @@ internal object CainiaoNativeRuntime {
     @Synchronized private fun engine(ctx: Context): Engine {
         cached?.let { return it }
         try {
-            verifiedPackage(ctx)
-            val official = ctx.createPackageContext(PACKAGE, Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY)
+            val official = if (HostedCainiao.isAvailable()) HostedCainiao.runtimeContext() else {
+                verifiedPackage(ctx)
+                ctx.createPackageContext(PACKAGE, Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY)
+            }
             val context = StorageContext(official, ctx.applicationContext, File(ctx.noBackupFilesDir, "cainiao-native-runtime").apply { mkdirs() })
-            val loader = official.classLoader
+            val loader = if (HostedCainiao.isAvailable()) HostedCainiao.runtimeLoader() else official.classLoader
             val managerClass = loader.loadClass("com.alibaba.wireless.security.open.SecurityGuardManager")
             val manager = managerClass.getMethod("getInstance", Context::class.java).invoke(null, context)
             val store = managerClass.getMethod("getStaticDataStoreComp").invoke(manager)

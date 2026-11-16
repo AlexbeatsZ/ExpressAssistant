@@ -11,14 +11,15 @@ Android 快递聚合工具：在一个程序里查看快递、取件码和菜鸟
 - 在搜索框输入运单号自动识别承运商，点击添加或提交搜索即可保存；相同单号不重复添加。
 - 完成和异常记录从工具栏打开，未知状态显示待更新；有明确派送信号才显示派送中。
 - 物流轨迹、预计送达、取件码、跟踪通知、快递日历和桌面小组件。
-- 菜鸟身份码使用 CODE_128，身份材料与本人会话加密存储并支持续期；初始化通过本机维护 API。
+- 菜鸟运行环境与手机号登录入口集成在同一个 APK 内，不需要另装菜鸟或模块管理器；设置中的菜鸟登录直接接收 SDK 认证结果。
+- 菜鸟身份码使用 CODE_128，身份材料与本人会话加密存储并支持原生会员续登；本机维护 API 继续可用。
 - 可选快递100查询和无障碍导入；不依赖额外测试组件。
 
 ## 使用
 
 1. 在设置中登录需要的平台账号，回到快递页下拉同步。
 2. 搜索框可以查历史，也可以识别并添加运单号；长按卡片可改名、跟踪或移除。
-3. 从底部右侧打开身份码。当前身份会话初始化与维护接口见 [API 说明](server/AI_API.md)。独立手机号登录仍在研究，见 [可行性记录](docs/design/cainiao-login.md)。
+3. 菜鸟账号入口位于「设置 → 账号与同步 → 菜鸟登录」，身份码从底部右侧打开。整合包已通过原版停用后的原生续登与身份码刷新；新的手机号首次认证验收进度见 [登录记录](docs/design/cainiao-login.md)。维护接口见 [API 说明](server/AI_API.md)。
 4. 需要外部程序管理时，使用电脑服务器的查询和操作接口；日常调用不要求手机在线。
 
 ## 电脑服务器
@@ -27,13 +28,15 @@ Android 快递聚合工具：在一个程序里查看快递、取件码和菜鸟
 
 ## 构建
 
-需要 JDK 17、Android SDK 36。构建与检查：
+界面模块需要 JDK 17 和 Android SDK 36。构建与检查：
 
 ```bash
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease
 ```
 
-个人签名配置放在本地 `.signing/personal.properties` 与对应 keystore，均不进入 Git。未提供私有签名时可使用 `:app:assembleDebug`。
+整合交付还需要已有的本地运行时 APK 输入与 JDK 21+，继续执行 [单包构建流程](tools/cainiao-host/README.md)。最终交付是 `outputs/ExpressAssistant-v<版本>.apk`，包名和个人签名保持不变。构建程序不会下载或安装独立菜鸟。
+
+个人签名配置放在本地 `.signing/personal.properties` 与对应 keystore，均不进入 Git。`:app:assembleDebug` 与 CI 附件仅用于界面模块开发，不是完整的菜鸟集成交付包。内置宿主和构建工具的来源见 [设计记录](docs/design/cainiao-embedded.md)。
 
 ## 数据
 

@@ -30,6 +30,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ExpressAssistant">
 
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposedminversion" android:value="82" />
+        <meta-data android:name="xposeddescription" android:value="ExpressAssistant integrated Cainiao runtime" />
+
         <!-- com.miui.system 只有小米 ROM 有，required=false 才能让其他品牌安装；
              小米专属功能（miui.os.Build / CoderUtils 签名）全部走反射并有降级兜底 -->
         <uses-library

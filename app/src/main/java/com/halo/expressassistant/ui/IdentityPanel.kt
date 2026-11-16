@@ -12,8 +12,6 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
@@ -21,7 +19,6 @@ import com.google.zxing.MultiFormatWriter
 import com.halo.expressassistant.api.CainiaoIdentity
 import com.halo.expressassistant.api.CainiaoRenewal
 import com.halo.expressassistant.api.CainiaoServiceException
-import com.halo.expressassistant.service.CainiaoLoginCaptureService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -49,31 +46,12 @@ class IdentityPanel(private val activity: AppCompatActivity) {
     }
     private val refresh = MaterialButton(activity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
         text = "刷新"; setIconResource(com.halo.expressassistant.R.drawable.ic_sync)
+        iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
+        iconPadding = dp(8)
+        gravity = Gravity.CENTER
+        minWidth = dp(120)
+        setSingleLine(true)
         setOnClickListener { update(true) }
-    }
-    private val capture = MaterialButton(activity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-        text = "开始获取"
-        setOnClickListener {
-            try {
-                if (CainiaoLoginCaptureService.state.value.running) CainiaoLoginCaptureService.stop(activity)
-                else CainiaoLoginCaptureService.start(activity)
-            } catch (_: Exception) {
-                android.widget.Toast.makeText(activity, "无法启动，请在当前页面重试", android.widget.Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-    private val captureStatus = TextView(activity).apply {
-        text = "需要 Root 授权。开始后到菜鸟登录，再打开身份码。"
-        textSize = 14f; gravity = Gravity.CENTER
-        setPadding(0, dp(12), 0, dp(4))
-    }
-    private val openCainiao = MaterialButton(activity, null, androidx.appcompat.R.attr.borderlessButtonStyle).apply {
-        text = "打开菜鸟"
-        setOnClickListener {
-            val intent = activity.packageManager.getLaunchIntentForPackage("com.cainiao.wireless")
-            if (intent != null) activity.startActivity(intent)
-            else android.widget.Toast.makeText(activity, "请先安装官方菜鸟", android.widget.Toast.LENGTH_LONG).show()
-        }
     }
     private var state = CainiaoRenewal.Snapshot(null, null, 0, null)
     private var previousCode = ""
@@ -85,18 +63,6 @@ class IdentityPanel(private val activity: AppCompatActivity) {
         body.addView(codeText, LinearLayout.LayoutParams(-1, -2))
         body.addView(status, LinearLayout.LayoutParams(-1, -2))
         body.addView(refresh)
-        body.addView(captureStatus, LinearLayout.LayoutParams(-1, -2))
-        body.addView(capture)
-        body.addView(openCainiao)
-        activity.lifecycleScope.launch {
-            activity.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                CainiaoLoginCaptureService.state.collect { current ->
-                    capture.text = if (current.running) "停止获取" else "开始获取"
-                    if (current.message.isNotBlank()) captureStatus.text = current.message
-                    if (!current.running) reloadFromStore()
-                }
-            }
-        }
     }
 
     fun show() {

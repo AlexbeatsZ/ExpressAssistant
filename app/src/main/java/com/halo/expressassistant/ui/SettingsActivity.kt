@@ -19,6 +19,10 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.pm.PackageInfoCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -27,6 +31,11 @@ import com.google.android.material.textfield.TextInputLayout
 import com.halo.expressassistant.R
 import com.halo.expressassistant.PackageAutoImport
 import com.halo.expressassistant.api.XiaomiApi
+import com.halo.expressassistant.api.CainiaoRenewal
+import com.halo.expressassistant.api.CainiaoServiceException
+import com.halo.expressassistant.service.CainiaoLoginCaptureService
+import com.halo.expressassistant.embedded.HostedCainiao
+import com.halo.expressassistant.embedded.EmbeddedCainiaoLogin
 import com.halo.expressassistant.data.Store
 import com.halo.expressassistant.databinding.ActivitySettingsBinding
 import kotlinx.coroutines.CoroutineScope
@@ -41,6 +50,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySettingsBinding
     private var addressInput: EditText? = null
     private var smsImportStatus: TextView? = null
+    private var cainiaoSheet: BottomSheetDialog? = null
     private val requestXiaomi = 100
     private val requestJd = 101
     private val requestTb = 102
@@ -60,6 +70,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.rowJdLogin.setOnClickListener { showJdSheet() }
         binding.rowTbLogin.setOnClickListener { showTbSheet() }
         binding.rowPddLogin.setOnClickListener { showPddSheet() }
+        binding.rowCainiaoLogin.setOnClickListener { showCainiaoSheet() }
         binding.rowHidden.setOnClickListener { showHiddenDialog() }
         binding.rowWidget.setOnClickListener { showWidgetSheet() }
         binding.rowPoll.setOnClickListener { showPollSheet() }
@@ -68,6 +79,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.rowAbout.setOnClickListener { showAboutSheet() }
         binding.rowSupport.setOnClickListener { showSupportDialog() }
         refreshButtons()
+        if (intent.getBooleanExtra(EXTRA_CAINIAO_LOGIN, false)) binding.root.post { showCainiaoSheet() }
     }
 
     /** 打开当前维护仓库。 */
@@ -86,12 +98,114 @@ class SettingsActivity : AppCompatActivity() {
         val poll = Store.pollIntervalMin(this)
         binding.pollSummary.text = if (poll <= 0) "默认关闭" else "每 $poll 分钟 · 仅轮询有在途跟踪件的平台"
         binding.addressSummary.text = addressSummaryLabel()
+        refreshCainiaoSummary()
     }
 
     override fun onResume() {
         super.onResume()
         refreshButtons()
         PackageAutoImport.scanSms(this)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_CAINIAO_LOGIN, false)) showCainiaoSheet()
+    }
+
+    private fun refreshCainiaoSummary() {
+        lifecycleScope.launch {
+            val snapshot = withContext(Dispatchers.IO) { runCatching { CainiaoRenewal.snapshot(this@SettingsActivity) }.getOrNull() }
+            binding.cainiaoLoginSummary.text = when {
+                CainiaoLoginCaptureService.state.value.running -> "正在获取登录信息"
+                snapshot?.error == CainiaoServiceException.Kind.LOGIN_EXPIRED && !snapshot.canAutoRenew -> "登录已失效"
+                snapshot?.material != null -> "已保存登录信息"
+                HostedCainiao.isAvailable() -> "未登录"
+                else -> "从已登录菜鸟获取"
+            }
+        }
+    }
+
+    private fun showCainiaoSheet() {
+        if (CainiaoLoginCaptureService.state.value.running) { showCainiaoCaptureSheet(); return }
+        if (!HostedCainiao.isAvailable()) { showCainiaoCaptureSheet(); return }
+        if (cainiaoSheet?.isShowing == true) return
+        val (sheet, container) = Sheets.create(this, "菜鸟登录", "在快递内完成登录，登录信息仅保存在本机。")
+        cainiaoSheet = sheet
+        val status = TextView(this).apply {
+            textSize = 14f
+            setTextColor(onSurfaceVariant())
+            setPadding(0, dp(12), 0, dp(12))
+        }
+        container.addView(status)
+        container.addView(MaterialButton(this).apply {
+            text = "登录菜鸟"
+            setOnClickListener { sheet.dismiss(); EmbeddedCainiaoLogin.login(this@SettingsActivity) }
+        })
+        if (packageManager.getLaunchIntentForPackage("com.cainiao.wireless") != null) {
+            container.addView(sheetNavRow("从已登录菜鸟获取", "其他连接方式", R.drawable.ic_sync) {
+                sheet.dismiss(); showCainiaoCaptureSheet()
+            })
+        }
+        val updates = lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                EmbeddedCainiaoLogin.state.collect { message ->
+                    status.text = message.ifBlank { "登录后可同步身份码和取件信息。" }
+                    refreshCainiaoSummary()
+                }
+            }
+        }
+        sheet.setOnDismissListener { updates.cancel(); cainiaoSheet = null }
+        sheet.show()
+    }
+
+    private fun showCainiaoCaptureSheet() {
+        if (cainiaoSheet?.isShowing == true) return
+        val (sheet, container) = Sheets.create(this, "菜鸟登录", "从本机已登录的菜鸟获取登录信息，需要 Root 授权。")
+        cainiaoSheet = sheet
+        val installed = packageManager.getLaunchIntentForPackage("com.cainiao.wireless") != null
+        val status = TextView(this).apply {
+            textSize = 14f
+            setTextColor(onSurfaceVariant())
+            setPadding(0, dp(12), 0, dp(12))
+        }
+        container.addView(status)
+        val capture = MaterialButton(this).apply {
+            setOnClickListener {
+                try {
+                    if (CainiaoLoginCaptureService.state.value.running) CainiaoLoginCaptureService.stop(this@SettingsActivity)
+                    else CainiaoLoginCaptureService.start(this@SettingsActivity)
+                } catch (_: Exception) {
+                    Toast.makeText(this@SettingsActivity, "无法启动，请在当前页面重试", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        container.addView(capture)
+        if (installed) container.addView(MaterialButton(this, null, androidx.appcompat.R.attr.borderlessButtonStyle).apply {
+            text = "打开已安装菜鸟"
+            setOnClickListener {
+                val launch = packageManager.getLaunchIntentForPackage("com.cainiao.wireless")
+                if (launch != null) startActivity(launch)
+                else Toast.makeText(this@SettingsActivity, "本机未安装菜鸟，无法使用此获取方式", Toast.LENGTH_LONG).show()
+            }
+        })
+        val updates = lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                CainiaoLoginCaptureService.state.collect { current ->
+                    capture.text = if (current.running) "停止获取" else "开始获取"
+                    capture.isEnabled = installed || current.running
+                    status.text = when {
+                        current.running -> current.message
+                        !installed -> "本机未安装菜鸟，无法使用此获取方式。"
+                        current.message.isNotBlank() -> current.message
+                        else -> "点击开始后，在已安装的菜鸟中登录并打开身份码；获取成功后会自动停止。"
+                    }
+                    refreshCainiaoSummary()
+                }
+            }
+        }
+        sheet.setOnDismissListener { updates.cancel(); cainiaoSheet = null }
+        sheet.show()
     }
 
     private fun smsPermissionSummary(): String =
@@ -1248,6 +1362,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     companion object {
+        const val EXTRA_CAINIAO_LOGIN = "cainiao_login"
         private const val REQUEST_LOCATION = 4001
     }
 }

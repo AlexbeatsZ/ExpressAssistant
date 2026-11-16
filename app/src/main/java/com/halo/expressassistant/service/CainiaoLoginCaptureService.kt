@@ -15,7 +15,7 @@ import com.halo.expressassistant.api.CainiaoNativeRuntime
 import com.halo.expressassistant.api.CainiaoRenewal
 import com.halo.expressassistant.api.CainiaoServiceException
 import com.halo.expressassistant.data.CainiaoSessionStore
-import com.halo.expressassistant.ui.MainActivity
+import com.halo.expressassistant.ui.SettingsActivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -157,8 +157,8 @@ class CainiaoLoginCaptureService : Service() {
     }
 
     private fun notification(message: String): android.app.Notification {
-        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java)
-            .putExtra("identity_code", true).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        val open = PendingIntent.getActivity(this, 0, Intent(this, SettingsActivity::class.java)
+            .putExtra(SettingsActivity.EXTRA_CAINIAO_LOGIN, true).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, javaClass).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

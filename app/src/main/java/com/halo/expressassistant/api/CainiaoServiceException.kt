@@ -5,7 +5,7 @@ class CainiaoServiceException(val kind: Kind) : Exception(kind.message) {
     enum class Kind(val message: String) {
         LOGIN_EXPIRED("菜鸟登录已过期，请重新登录"),
         NO_SESSION("尚未登录菜鸟"),
-        AUTH_RUNTIME_UNAVAILABLE("自动续登组件不可用，请确认官方菜鸟仍已安装"),
+        AUTH_RUNTIME_UNAVAILABLE("菜鸟认证组件暂不可用，请重启快递后重试"),
         AUTO_RENEW_NOT_CONFIGURED("尚未配置菜鸟自动续登"),
         NETWORK("连接菜鸟失败，请检查网络后重试"),
         REJECTED("菜鸟暂未允许本次请求，请稍后重试"),

@@ -11,6 +11,11 @@ import androidx.core.view.WindowInsetsCompat
 object EdgeToEdge {
     fun apply(activity: Activity, root: View) {
         WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            activity.window.attributes = activity.window.attributes.apply {
+                layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            }
+        }
         activity.window.statusBarColor = Color.TRANSPARENT
         activity.window.navigationBarColor = Color.TRANSPARENT
         if (android.os.Build.VERSION.SDK_INT >= 28) {
