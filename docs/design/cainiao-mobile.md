@@ -6,6 +6,7 @@
 
 ## 会话边界
 
+- 0.9.16新增独立淘宝身份码：官方getIdentityMessage、XNS码和淘宝会话，细节见taobao-identity.md；原菜鸟CS8身份码与该链路不混用。
 - 身份码使用用户明确授权取得的菜鸟 App Cookie，H5 `native.identitycode.get.cn` 可续期；不需要重放原生 x-sign。
 - 菜鸟「我的包裹」使用淘宝 H5 会话和不带 `.cn` 的列表 API。实测上述菜鸟 App Cookie 不能直接用于列表，不能混用。
 - 服务器旧淘宝身份码接口的五个 false 只表示该请求上下文未下发码，不证明本人未实名或未授权。
