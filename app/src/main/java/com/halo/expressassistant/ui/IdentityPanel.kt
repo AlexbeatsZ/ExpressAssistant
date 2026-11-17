@@ -32,12 +32,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Both providers remain visible and refresh independently. */
+/** Only the selected provider is displayed and refreshed. */
 class IdentityPanel(private val activity: AppCompatActivity) {
     private val preferences = activity.getSharedPreferences("identity_display", android.content.Context.MODE_PRIVATE)
+    private var selectedProvider = preferences.getString("provider", "cainiao")
+        .takeIf { it == Store.CH_TAOBAO } ?: "cainiao"
     private val body = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(16), dp(16), dp(16), dp(24))
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(16), dp(16), dp(16), dp(112))
     }
     val view = ScrollView(activity).apply { isFillViewport = true; addView(body) }
     private val cainiao = CodeCard("菜鸟身份码") { updateCainiao(true) }
@@ -56,8 +59,24 @@ class IdentityPanel(private val activity: AppCompatActivity) {
 
     init {
         taobao.content.addView(accountButton, 1, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
-        body.addView(cainiao.view, LinearLayout.LayoutParams(-1, -2))
-        body.addView(taobao.view, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
+        showSelectedCard()
+    }
+
+    private fun showSelectedCard() {
+        body.removeAllViews()
+        val card = if (selectedProvider == Store.CH_TAOBAO) taobao else cainiao
+        body.addView(card.view, LinearLayout.LayoutParams(-1, -2))
+    }
+
+    private fun switchProvider() {
+        cainiao.cancel()
+        taobao.cancel()
+        cainiao.render(null, emptyList())
+        taobao.render(null, emptyList())
+        selectedProvider = if (selectedProvider == Store.CH_TAOBAO) "cainiao" else Store.CH_TAOBAO
+        preferences.edit().putString("provider", selectedProvider).apply()
+        showSelectedCard()
+        reloadFromStore()
     }
 
     fun show() {
@@ -69,9 +88,9 @@ class IdentityPanel(private val activity: AppCompatActivity) {
             while (visible) {
                 render()
                 val now = System.currentTimeMillis()
-                if (state.material != null && (state.error != CainiaoServiceException.Kind.LOGIN_EXPIRED || state.canAutoRenew) &&
+                if (selectedProvider == "cainiao" && state.material != null && (state.error != CainiaoServiceException.Kind.LOGIN_EXPIRED || state.canAutoRenew) &&
                     (state.online?.expiresAtMs ?: 0) <= now && now - state.lastAttemptAtMs >= 60_000) updateCainiao(false)
-                if (taobaoAccount != null && taobaoError != TaobaoIdentity.Error.LOGIN_REQUIRED &&
+                if (selectedProvider == Store.CH_TAOBAO && taobaoAccount != null && taobaoError != TaobaoIdentity.Error.LOGIN_REQUIRED &&
                     taobaoCode?.usable(now) != true && now - taobaoLastAttempt >= 60_000) updateTaobao(false)
                 delay(1000)
             }
@@ -123,7 +142,7 @@ class IdentityPanel(private val activity: AppCompatActivity) {
     }
 
     private fun updateCainiao(force: Boolean) {
-        if (cainiao.loading) return
+        if (!visible || selectedProvider != "cainiao" || cainiao.loading) return
         if (!force && state.error == CainiaoServiceException.Kind.LOGIN_EXPIRED && !state.canAutoRenew) return
         val version = cainiao.generation
         cainiao.setLoading(true)
@@ -151,7 +170,7 @@ class IdentityPanel(private val activity: AppCompatActivity) {
 
     private fun updateTaobao(force: Boolean) {
         val account = taobaoAccount ?: return
-        if (taobao.loading) return
+        if (!visible || selectedProvider != Store.CH_TAOBAO || taobao.loading) return
         if (!force && (taobaoCode?.usable(System.currentTimeMillis()) == true || taobaoError == TaobaoIdentity.Error.LOGIN_REQUIRED)) return
         val version = taobao.generation
         taobaoLastAttempt = System.currentTimeMillis()
@@ -183,12 +202,15 @@ class IdentityPanel(private val activity: AppCompatActivity) {
 
     private fun render() {
         val now = System.currentTimeMillis()
-        val cnDisplay = runCatching { CainiaoIdentity.display(state.material, state.online, now) }.getOrNull()
-        cainiao.render(cnDisplay?.value, listOfNotNull(state.error?.message, cnDisplay?.let { countdown(it.expiresAtMs, now) }))
-        val tbDisplay = taobaoCode?.takeIf { it.usable(now) }
-        val tbError = if (taobaoAccount == null) "请先在设置中登录淘宝" else taobaoError?.message
-        taobao.refresh.isEnabled = !taobao.loading && taobaoAccount != null
-        taobao.render(tbDisplay?.value, listOfNotNull(tbError, tbDisplay?.let { countdown(it.refreshAtMs, now) }))
+        if (selectedProvider == "cainiao") {
+            val display = runCatching { CainiaoIdentity.display(state.material, state.online, now) }.getOrNull()
+            cainiao.render(display?.value, listOfNotNull(state.error?.message, display?.let { countdown(it.expiresAtMs, now) }))
+        } else {
+            val display = taobaoCode?.takeIf { it.usable(now) }
+            val error = if (taobaoAccount == null) "请先在设置中登录淘宝" else taobaoError?.message
+            taobao.refresh.isEnabled = !taobao.loading && taobaoAccount != null
+            taobao.render(display?.value, listOfNotNull(error, display?.let { countdown(it.refreshAtMs, now) }))
+        }
     }
 
     private fun countdown(next: Long, now: Long): String {
@@ -201,7 +223,10 @@ class IdentityPanel(private val activity: AppCompatActivity) {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
         }
-        val view = MaterialCardView(activity).apply {
+        val view = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        private val card = MaterialCardView(activity).apply {
             radius = dp(24).toFloat(); cardElevation = 0f; strokeWidth = 0
             setCardBackgroundColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSurfaceContainerLow))
             addView(content, LinearLayout.LayoutParams(-1, -2))
@@ -213,7 +238,7 @@ class IdentityPanel(private val activity: AppCompatActivity) {
             iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
             iconPadding = dp(6); iconSize = dp(18)
             gravity = Gravity.CENTER; minWidth = 0; minimumWidth = 0
-            minHeight = dp(40); minimumHeight = dp(40)
+            minHeight = dp(48); minimumHeight = dp(48)
             insetTop = 0; insetBottom = 0
             setPadding(dp(12), 0, dp(12), 0)
             setSingleLine(true)
@@ -239,17 +264,33 @@ class IdentityPanel(private val activity: AppCompatActivity) {
             private set
 
         init {
-            val header = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
-            header.addView(TextView(activity).apply {
-                text = title; textSize = 18f
+            content.addView(TextView(activity).apply {
+                text = title
+                textSize = 18f
+                gravity = Gravity.CENTER
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
-            }, LinearLayout.LayoutParams(0, -2, 1f))
-            header.addView(refresh, LinearLayout.LayoutParams(dp(104), dp(40)))
-            content.addView(header, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
+            }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
             content.addView(barcode, LinearLayout.LayoutParams(-1, dp(120)))
             content.addView(codeText, LinearLayout.LayoutParams(-1, -2))
             content.addView(status, LinearLayout.LayoutParams(-1, -2))
+            view.addView(card, LinearLayout.LayoutParams(-1, -2))
+            val actions = LinearLayout(activity).apply { gravity = Gravity.CENTER }
+            actions.addView(MaterialButton(activity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = "切换"
+                textSize = 14f
+                contentDescription = "切换到${if (title == "菜鸟身份码") "淘宝" else "菜鸟"}身份码"
+                minWidth = 0
+                minimumWidth = 0
+                minHeight = dp(48)
+                minimumHeight = dp(48)
+                insetTop = 0
+                insetBottom = 0
+                setSingleLine(true)
+                setOnClickListener { switchProvider() }
+            }, LinearLayout.LayoutParams(dp(120), dp(48)).apply { marginEnd = dp(16) })
+            actions.addView(refresh, LinearLayout.LayoutParams(dp(120), dp(48)))
+            view.addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
         }
 
         fun setLoading(value: Boolean) {
