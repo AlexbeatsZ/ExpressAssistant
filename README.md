@@ -1,6 +1,6 @@
 # 快递助手 · ExpressAssistant
 
-Android 快递聚合工具：在一个程序里查看快递、取件码和菜鸟身份条形码。电脑服务器独立保存账号与同步数据，提供 REST / MCP 查询和操作接口。手机与服务器均不内置模型、AI 对话或日报。
+Android 快递聚合工具：在一个程序里查看快递、取件码和菜鸟身份条形码。电脑服务器独立保存账号与同步数据，提供 REST / MCP 查询和操作接口。
 
 当前维护仓库：[AlexbeatsZ/ExpressAssistant](https://github.com/AlexbeatsZ/ExpressAssistant)，基于 [Halo0sama/ExpressAssistant](https://github.com/Halo0sama/ExpressAssistant)。
 
