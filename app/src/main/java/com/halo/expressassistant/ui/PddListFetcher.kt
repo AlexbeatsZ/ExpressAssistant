@@ -184,6 +184,9 @@ object PddListFetcher {
 
         fun finish(result: List<ExpressItem>?, err: String?) {
             if (finished) return
+            account?.let { com.halo.expressassistant.data.AccountLoginStore.record(act, Store.CH_PDD, it,
+                captures.any { (url, body) -> url == PddCapture.INITIAL_ORDERS ||
+                    url.contains("/aristotle/order_list") && PddCapture.authenticatedOrders(body) }, err) }
             finished = true
             scrolling = false
             handler.postDelayed({

@@ -20,7 +20,8 @@ data class BoundAccount(
     val id: String,
     val label: String = "",
     val enabled: Boolean = true,
-    val payload: String = ""
+    val payload: String = "",
+    val loginGeneration: Long = 0L
 )
 
 /** 多地址管理：一条收件地址（label 用于显示，address 为具体地址） */

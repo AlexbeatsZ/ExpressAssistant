@@ -216,22 +216,30 @@ object Store {
         return try { json.decodeFromString<List<BoundAccount>>(raw) } catch (e: Throwable) { emptyList() }
     }
 
-    fun saveAccounts(context: Context, channel: String, list: List<BoundAccount>) {
+    @Synchronized fun saveAccounts(context: Context, channel: String, list: List<BoundAccount>) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
             putString(accountKey(channel), json.encodeToString(list))
         }
     }
 
-    fun addAccount(context: Context, channel: String, account: BoundAccount) {
+    @Synchronized fun addAccount(context: Context, channel: String, account: BoundAccount) {
         saveAccounts(context, channel, accounts(context, channel).filterNot { it.id == account.id } + account)
+        AccountLoginStore.signedIn(context, channel, account.id)
     }
 
-    fun removeAccount(context: Context, channel: String, id: String) {
+    @Synchronized fun removeAccount(context: Context, channel: String, id: String) {
         saveAccounts(context, channel, accounts(context, channel).filterNot { it.id == id })
     }
 
-    fun updateAccount(context: Context, channel: String, account: BoundAccount) {
+    @Synchronized fun updateAccount(context: Context, channel: String, account: BoundAccount) {
         saveAccounts(context, channel, accounts(context, channel).map { if (it.id == account.id) account else it })
+    }
+
+    /** Cookie rotation must preserve current metadata and cannot replace a newer login. */
+    @Synchronized fun updateAccountPayload(context: Context, channel: String, requested: BoundAccount, payload: String): BoundAccount? {
+        val current = accountById(context, channel, requested.id)
+        if (!LoginStatus.accepts(current, requested)) return null
+        return current!!.copy(payload = payload).also { updateAccount(context, channel, it) }
     }
 
     fun firstEnabledAccount(context: Context, channel: String): BoundAccount? =
@@ -323,6 +331,9 @@ object Store {
     fun maskPhone(p: String): String =
         if (p.length >= 7) p.replaceRange(3, 7, "****") else p
 
+    private fun cookieValue(cookies: String, name: String): String = cookies.split(';')
+        .map { it.trim().split('=', limit = 2) }.firstOrNull { it.size == 2 && it[0] == name }?.get(1).orEmpty()
+
     fun jdLabelOf(cookies: String): String {
         val m = Regex("[;\\s]pt_pin=([^;]+)").find(cookies)?.groupValues?.get(1)
         return if (!m.isNullOrBlank()) java.net.URLDecoder.decode(m, "UTF-8").take(16) else "账号"
@@ -357,7 +368,7 @@ object Store {
 
     fun xiaomiPhones(context: Context): List<String> = xiaomiCred(context).phones
 
-    fun addXiaomiAccount(context: Context, cred: XiaomiCred) {
+    @Synchronized fun addXiaomiAccount(context: Context, cred: XiaomiCred) {
         // 同账号（userId 相同）重新登录 = 更新凭证，不新增重复账号
         val existing = if (cred.accountId.isNotBlank()) {
             accounts(context, CH_XIAOMI).firstOrNull {
@@ -369,6 +380,7 @@ object Store {
                 context, CH_XIAOMI,
                 existing.copy(payload = xiaomiPayload(cred))
             )
+            AccountLoginStore.signedIn(context, CH_XIAOMI, existing.id)
         } else {
             addAccount(
                 context, CH_XIAOMI,
@@ -413,12 +425,16 @@ object Store {
     fun jdCookies(context: Context): String =
         firstEnabledAccount(context, CH_JD)?.let { cookieOf(it.payload) } ?: ""
 
-    fun addJdAccount(context: Context, cookies: String) {
+    @Synchronized fun addJdAccount(context: Context, cookies: String) {
         // 去重：同账号（标签=pt_key/尾号）已存在 → 更新凭证而非重复新增（防“自动登录重复绑定”）
         val label = "京东账号 · ${jdLabelOf(cookies)}"
-        val exists = accounts(context, CH_JD).firstOrNull { it.label == label }
+        val exists = accounts(context, CH_JD).firstOrNull {
+            cookieValue(cookies, "pt_pin").isNotBlank() &&
+                cookieValue(cookieOf(it.payload), "pt_pin") == cookieValue(cookies, "pt_pin")
+        }
         if (exists != null) {
-            updateAccount(context, CH_JD, exists.copy(payload = cookiePayload(cookies), enabled = true))
+            updateAccount(context, CH_JD, exists.copy(payload = cookiePayload(cookies)))
+            AccountLoginStore.signedIn(context, CH_JD, exists.id)
             return
         }
         addAccount(
@@ -450,12 +466,16 @@ object Store {
     fun tbCookies(context: Context): String =
         firstEnabledAccount(context, CH_TAOBAO)?.let { cookieOf(it.payload) } ?: ""
 
-    fun addTbAccount(context: Context, cookies: String) {
+    @Synchronized fun addTbAccount(context: Context, cookies: String) {
         // 去重：同账号（unb/cookie1 尾号）已存在 → 更新凭证而非重复新增
         val label = "淘宝账号 · ${tbLabelOf(cookies)}"
-        val exists = accounts(context, CH_TAOBAO).firstOrNull { it.label == label }
+        val exists = accounts(context, CH_TAOBAO).firstOrNull {
+            cookieValue(cookies, "unb").isNotBlank() &&
+                cookieValue(cookieOf(it.payload), "unb") == cookieValue(cookies, "unb")
+        }
         if (exists != null) {
-            updateAccount(context, CH_TAOBAO, exists.copy(payload = cookiePayload(cookies), enabled = true))
+            updateAccount(context, CH_TAOBAO, exists.copy(payload = cookiePayload(cookies)))
+            AccountLoginStore.signedIn(context, CH_TAOBAO, exists.id)
             return
         }
         addAccount(
@@ -486,7 +506,7 @@ object Store {
     fun pddCookies(context: Context): String =
         firstEnabledAccount(context, CH_PDD)?.let { cookieOf(it.payload) } ?: ""
 
-    fun addPddAccount(context: Context, cookies: String, webProfile: String = "") {
+    @Synchronized fun addPddAccount(context: Context, cookies: String, webProfile: String = "") {
         val uid = PddSession.userId(cookies)
         require(PddSession.hasCredentials(cookies)) { "Missing PDD credentials" }
         val payload = json.encodeToString(mapOf("cookie" to cookies, "webProfile" to webProfile))
@@ -495,7 +515,8 @@ object Store {
             PddSession.userId(cookieOf(it.payload)) == uid
         }
         if (exists != null) {
-            updateAccount(context, CH_PDD, exists.copy(payload = payload, enabled = true))
+            updateAccount(context, CH_PDD, exists.copy(payload = payload))
+            AccountLoginStore.signedIn(context, CH_PDD, exists.id)
         } else {
             addAccount(context, CH_PDD, BoundAccount(
                 id = java.util.UUID.randomUUID().toString(),

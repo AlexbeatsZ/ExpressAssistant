@@ -109,6 +109,7 @@ object JdListFetcher {
         onDone: (List<ExpressItem>?, Map<String, JdGoods>, String?) -> Unit
     ) {
         val captures = ArrayList<String>()
+        var loginAccount = account
         var finished = false
         val w = WebView(act)
         WebView.setWebContentsDebuggingEnabled(true)
@@ -147,6 +148,10 @@ object JdListFetcher {
 
         fun finish(result: List<ExpressItem>?, err: String?) {
             if (finished) return
+            loginAccount?.let { com.halo.expressassistant.data.AccountLoginStore.record(act, Store.CH_JD, it,
+                captures.any { body -> runCatching {
+                    JSONObject(body).optJSONObject("body")?.optJSONArray("orderList") != null
+                }.getOrDefault(false) }, err) }
             finished = true
             scrollStarted = false
             challengeShown = false
@@ -186,7 +191,9 @@ object JdListFetcher {
                         Log.i(TAG, "skip anon overwrite: keep login payload (${old.length})")
                         return
                     }
-                    Store.updateAccount(act, Store.CH_JD, account.copy(payload = Store.cookiePayload(cookies)))
+                    loginAccount?.let { requested ->
+                        Store.updateAccountPayload(act, Store.CH_JD, requested, Store.cookiePayload(cookies))?.let { loginAccount = it }
+                    }
                 } else {
                     Store.saveJdCookies(act, cookies)
                 }
@@ -198,7 +205,9 @@ object JdListFetcher {
 
         w.webViewClient = object : WebViewClient() {            override fun onPageFinished(view: WebView, url: String) {
                 Log.i(TAG, "page: $url")
+                if (finished) return
                 if (url.contains("plogin") || url.contains("nopasswordcmcc")) {
+                    loginAccount?.let { com.halo.expressassistant.data.AccountLoginStore.record(act, Store.CH_JD, it, false, "京东需要重新登录验证") }
                     if (!includeHistory) {
                         finish(null, "京东需要重新登录验证，已保留旧数据")
                         return

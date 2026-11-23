@@ -10,6 +10,7 @@ import com.halo.expressassistant.api.ManualPackages
 import com.halo.expressassistant.api.XiaomiSync
 import com.halo.expressassistant.data.ExpressItem
 import com.halo.expressassistant.data.JdGoods
+import com.halo.expressassistant.data.AccountLoginStore
 import com.halo.expressassistant.data.Store
 import com.halo.expressassistant.data.OrderRecords
 import kotlinx.coroutines.Dispatchers
@@ -74,7 +75,9 @@ object SyncEngine {
                     XiaomiSync.syncAccount(act, account)
                 } catch (e: Throwable) {
                     Log.w(TAG, "xiaomi sync fail: $e")
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     err = e.message ?: "小米同步失败"
+                    AccountLoginStore.record(act, Store.CH_XIAOMI, account, false, err)
                 }
             }
             xiaomiItems = Store.items(act).filter { it.source == "xiaomi" }
@@ -237,7 +240,11 @@ object SyncEngine {
         for (account in Store.accounts(act, Store.CH_TAOBAO).filter { it.enabled }) {
             try { CainiaoPackages.fetch(account).forEach { items[it.mailNo] = it } }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) { error = e.message ?: "菜鸟包裹读取失败" }
+            catch (e: Exception) {
+                error = e.message ?: "菜鸟包裹读取失败"
+                if (e is com.halo.expressassistant.api.CainiaoServiceException && e.kind == com.halo.expressassistant.api.CainiaoServiceException.Kind.LOGIN_EXPIRED)
+                    AccountLoginStore.record(act, Store.CH_TAOBAO, account, false, "淘宝登录已失效")
+            }
         }
         return (if (items.isEmpty() && error != null) null else items.values.toList()) to error
     }
@@ -248,8 +255,8 @@ object SyncEngine {
         val allItems = ArrayList<ExpressItem>()
         var err: String? = null
         val observed = HashSet<String>()
-        try {
-            for (account in accounts) {
+        for (account in accounts) {
+            try {
                 val cookies = Store.cookieOf(account.payload)
                 if (cookies.isBlank()) continue
                 // 1) 订单列表（最多翻 3 页，按订单号去重）
@@ -259,6 +266,7 @@ object SyncEngine {
                     batch.forEach { orders.putIfAbsent(it.orderId, it) }
                     if (batch.size < 10) break
                 }
+                AccountLoginStore.record(act, Store.CH_TAOBAO, account, true, null)
                 orders.values.filter { it.tradeStatus.contains("CLOSED") || it.tradeStatus == "WAIT_BUYER_PAY" || it.statusText == "交易关闭" }
                     .forEach { observed.add(OrderRecords.key("taobao", account.id, it.orderId)) }
                 // 2) 过滤有物流的订单（跳过交易关闭/待付款）
@@ -309,14 +317,15 @@ object SyncEngine {
                 }
                 allItems.addAll(parcels.mapNotNull { p -> toItem(p, account) })
                 allItems.addAll(pending)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                err = e.message ?: "淘宝同步失败"
+                AccountLoginStore.record(act, Store.CH_TAOBAO, account, false, err)
+                Log.w(TAG, "tb sync fail: $e")
             }
-            return Triple(allItems, err, observed)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            Log.w(TAG, "tb sync fail: $e")
-            return Triple(allItems, e.message ?: "淘宝同步失败", observed)
         }
+        return Triple(allItems, err, observed)
     }
 
     /** 拼多多：逐账号**流式**抓取——每增量一批（订单+商品图）先上报（实时上涨），最终返回全量 */

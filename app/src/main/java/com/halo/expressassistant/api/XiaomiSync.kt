@@ -103,6 +103,7 @@ object XiaomiSync {
             }
             existing
         }
+        account?.let { com.halo.expressassistant.data.AccountLoginStore.record(context, Store.CH_XIAOMI, it, true, null) }
         "同步成功，共 ${incoming.size} 个快递"
     }
 

@@ -42,6 +42,8 @@ import com.halo.expressassistant.api.XiaomiApi
 import com.halo.expressassistant.api.XiaomiSync
 import com.halo.expressassistant.data.ExpressDetail
 import com.halo.expressassistant.data.ExpressItem
+import com.halo.expressassistant.data.AccountLoginStore
+import com.halo.expressassistant.data.CainiaoSessionStore
 import com.halo.expressassistant.data.Store
 import com.halo.expressassistant.data.displayProgress
 import com.halo.expressassistant.data.sectionKeyOf
@@ -75,6 +77,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingCompany: KuaiDi100.Company? = null
     private val storeChanges = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "items") runOnUiThread { reload() }
+        if (key == AccountLoginStore.CHANGE_KEY || key?.endsWith("_accounts") == true) runOnUiThread { refreshLoginWarning() }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -100,6 +103,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnDone.setOnClickListener { startActivity(Intent(this, DonePanelActivity::class.java)) }
         binding.btnCalendar.setOnClickListener { showCalendarSheet() }
         binding.btnSettings.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+        binding.loginWarningPanel.btnLoginWarning.setOnClickListener { showExpiredAccounts() }
         binding.searchInput.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -182,6 +186,10 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         getSharedPreferences("express_store", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(storeChanges)
         reload()
+        refreshLoginWarning()
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { AccountLoginStore.cainiao(this@MainActivity, CainiaoSessionStore.read(this@MainActivity)) }
+        }
         if (selectedTab == com.halo.expressassistant.R.id.nav_identity) identityPanel.show()
         com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(this)
         if (!maybeAutoSync() && !SyncEngine.isRunning) PddTraceBackfill.backfill(this, lifecycleScope)
@@ -213,6 +221,24 @@ class MainActivity : AppCompatActivity() {
         binding.emptyState.visibility = if (empty) View.VISIBLE else View.GONE
         binding.emptyState.text = if (q.isNotBlank()) "没有找到快递" else "没有在途快递"
         if (selectedTab == com.halo.expressassistant.R.id.nav_identity) identityPanel.reloadFromStore()
+    }
+
+    private fun refreshLoginWarning() {
+        val channels = AccountLoginStore.expiredChannels(this)
+        binding.loginWarningPanel.root.visibility = if (channels.isEmpty()) View.GONE else View.VISIBLE
+        binding.loginWarningPanel.loginWarningSummary.text = channels.joinToString("、") { AccountLoginStore.name(it) } + "暂时无法同步"
+    }
+
+    private fun showExpiredAccounts() {
+        val channels = AccountLoginStore.expiredChannels(this)
+        fun open(channel: String) {
+            startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_LOGIN_CHANNEL, channel))
+        }
+        if (channels.size == 1) open(channels.first())
+        else if (channels.isNotEmpty()) MaterialAlertDialogBuilder(this)
+            .setTitle("需要重新登录")
+            .setItems(channels.map { AccountLoginStore.name(it) }.toTypedArray()) { _, index -> open(channels[index]) }
+            .setNegativeButton("取消", null).show()
     }
 
     /** 在途判定（与适配器 bucket 一致）：0/1/2/5 归在途，3 完成、4/108-111 异常 */

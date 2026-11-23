@@ -47,8 +47,11 @@ object CainiaoRenewal {
     private fun renewMember(ctx: Context, session: JSONObject, force: Boolean = false): Boolean {
         val member = session.optJSONObject("member") ?: return false
         val device = session.optJSONObject("native") ?: return false
-        if (session.optBoolean("memberNeedsLogin") || !CainiaoMember.canRenew(member))
+        if (session.optBoolean("memberNeedsLogin") || !CainiaoMember.canRenew(member)) {
+            session.put("memberNeedsLogin", true).put("lastSessionRenewError", CainiaoServiceException.Kind.LOGIN_EXPIRED.name)
+            CainiaoSessionStore.save(ctx, session)
             throw CainiaoServiceException(CainiaoServiceException.Kind.LOGIN_EXPIRED)
+        }
         if (!force && !CainiaoMember.needsRenewal(member)) return false
         session.put("lastSessionRenewAttemptAtMs", System.currentTimeMillis())
         CainiaoSessionStore.save(ctx, session)
@@ -106,9 +109,17 @@ object CainiaoRenewal {
                 }
                 return response
             }
-            try { request() } catch (e: CainiaoServiceException) {
-                if (e.kind != CainiaoServiceException.Kind.LOGIN_EXPIRED || renewed || !renewMember(ctx, session, true)) throw e
-                request()
+            try {
+                try { request() } catch (e: CainiaoServiceException) {
+                    if (e.kind != CainiaoServiceException.Kind.LOGIN_EXPIRED || renewed || !renewMember(ctx, session, true)) throw e
+                    request()
+                }
+            } catch (e: CainiaoServiceException) {
+                if (e.kind == CainiaoServiceException.Kind.LOGIN_EXPIRED) {
+                    session.put("lastSessionRenewError", e.kind.name)
+                    CainiaoSessionStore.save(ctx, session)
+                }
+                throw e
             }
         }
     }

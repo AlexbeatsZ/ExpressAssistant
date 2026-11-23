@@ -160,6 +160,7 @@ object PhoneControl {
             val result = JSONObject().put("ok", true).put("version", UpdateChecker.versionName(ctx))
                 .put("items", Store.items(ctx).size)
                 .put("accounts", JSONObject().apply { Store.CHANNELS.forEach { put(it, Store.accounts(ctx, it).size) } })
+            result.put("expiredLoginChannels", JSONArray(com.halo.expressassistant.data.AccountLoginStore.expiredChannels(ctx)))
             val identity = JSONObject().put("available", false)
             runCatching {
                 val s = CainiaoSessionStore.read(ctx) ?: return@runCatching

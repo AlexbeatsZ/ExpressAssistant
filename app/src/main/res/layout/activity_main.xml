@@ -41,6 +41,7 @@
                 app:startIconDrawable="@drawable/ic_search" app:endIconMode="clear_text">
                 <com.google.android.material.textfield.TextInputEditText android:id="@+id/search_input" android:layout_width="match_parent" android:layout_height="wrap_content" android:singleLine="true" android:inputType="text" android:imeOptions="actionSearch" />
             </com.google.android.material.textfield.TextInputLayout>
+            <include android:id="@+id/login_warning_panel" layout="@layout/view_login_warning" />
             <LinearLayout android:id="@+id/pending_package" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginHorizontal="20dp" android:layout_marginBottom="8dp" android:gravity="center_vertical" android:visibility="gone">
                 <TextView android:id="@+id/pending_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:textColor="?attr/colorOnSurface" android:textSize="14sp" />
                 <com.google.android.material.button.MaterialButton android:id="@+id/btn_add_package" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="添加" />

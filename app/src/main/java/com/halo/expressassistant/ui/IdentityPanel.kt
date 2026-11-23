@@ -183,14 +183,17 @@ class IdentityPanel(private val activity: AppCompatActivity) {
                     syncTaobaoAccount(); render(); return@launch
                 }
                 if (version != taobao.generation) return@launch
-                val refreshed = current.copy(payload = Store.cookiePayload(result.cookie))
-                Store.updateAccount(activity, Store.CH_TAOBAO, refreshed)
+                com.halo.expressassistant.data.AccountLoginStore.record(activity, Store.CH_TAOBAO, account, true, null)
+                val refreshed = Store.updateAccountPayload(activity, Store.CH_TAOBAO, account, Store.cookiePayload(result.cookie)) ?: return@launch
                 taobaoAccount = refreshed
                 taobaoCode = result.code; taobaoError = null
             } catch (e: CancellationException) { throw e }
             catch (e: TaobaoIdentity.Failure) {
                 taobaoError = e.error
-                if (e.error == TaobaoIdentity.Error.LOGIN_REQUIRED) taobaoCode = null
+                if (e.error == TaobaoIdentity.Error.LOGIN_REQUIRED) {
+                    taobaoCode = null
+                    com.halo.expressassistant.data.AccountLoginStore.record(activity, Store.CH_TAOBAO, account, false, e.error.message)
+                }
                 if (force) android.widget.Toast.makeText(activity, e.error.message, android.widget.Toast.LENGTH_LONG).show()
             } catch (_: Exception) {
                 taobaoError = TaobaoIdentity.Error.INVALID_RESPONSE

@@ -48,5 +48,6 @@ object CainiaoSessionStore {
         val stream = target.startWrite()
         try { stream.write(data); target.finishWrite(stream) }
         catch (e: Exception) { target.failWrite(stream); throw e }
+        AccountLoginStore.cainiao(ctx, session)
     }
 }

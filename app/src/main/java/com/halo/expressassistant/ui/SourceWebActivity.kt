@@ -307,7 +307,9 @@ class SourceWebActivity : AppCompatActivity() {
         val account = accountId.takeIf { it.isNotBlank() }
             ?.let { id -> Store.accounts(this, Store.CH_JD).firstOrNull { it.id == id } }
         if (account != null) {
-            Store.updateAccount(this, Store.CH_JD, account.copy(payload = Store.cookiePayload(cookieStr)))
+            Store.updateAccountPayload(this, Store.CH_JD, account, Store.cookiePayload(cookieStr))?.let {
+                com.halo.expressassistant.data.AccountLoginStore.signedIn(this, Store.CH_JD, it.id)
+            }
         } else {
             Store.saveJdCookies(this, cookieStr)
         }
