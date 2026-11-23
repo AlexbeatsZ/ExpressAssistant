@@ -389,3 +389,7 @@ GET /api/status 的 identity 增加以下元数据，不含实际身份码：
 手机 `/api/express` 与 `/api/pickup` 增加 `pickupHint` 和 `trackingNumber`。`pickupCode` 仅表示平台实际返回的取件码；若拼多多返回「取件出示快递单号后五位」，完整说明在 `pickupHint`，不能将该末五位当作驿站码。PDD 的 `mailNo` 仍兼容既有本地订单键，真实运单号在 `trackingNumber`，`orderId` 不变。已取件清除取件凭据；到站后 ETA 为空。
 
 拼多多已知真实运单会自动查询本人菜鸟登录态，优先显示菜鸟实际返回的 `pickupCode`。`pickupCodeSource=cainiao` 表示菜鸟取码来源，`pickupQueryStatus` 表示最近查询结果（`ok`、`authorization_required`、`verification_required` 等），`pickupQueriedAt` 为毫秒时间戳；无码时的 `pickupHint` 仍仅是备用方式。此查询无需电脑或 ADB 常连。
+
+### 手机登录失效状态（Android 0.9.18）
+
+`GET /api/status` 增加 `expiredLoginChannels` 数组，例如 `["taobao", "pdd"]`。它只列出已启用账号中已经确认需要重新登录的平台（`xiaomi`、`jd`、`taobao`、`pdd`），以及已确认失效的独立 `cainiao` 会话。不含账号名称、ID、Cookie或其他凭据。空数组表示目前没有已确认的失效，不能据此断言每个平台都刚完成在线认证。网络错误不设置或清除已确认失效；重新登录或成功认证后对应提醒恢复。现有 `identity.needsLogin`、HTTP鉴权与其他字段保持兼容。

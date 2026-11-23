@@ -9,6 +9,8 @@
 
 ## Current State
 
+- 2026-11-22：v0.9.18/code32已按用户确认的Pixel样式完成登录失效提醒：按账号持久保存明确认证失效，主页提醒卡、设置摘要和账号卡重新登录联动，网络/超时不误报；稳定账号身份与登录代次隔离迟到请求。82单测、lintRelease零错误（470警告/1提示）、隔离Android16模拟器明暗色各3项集成测试通过。个人签名整合APK已覆盖K70并再次冷启动，升级前41件及四平台各1账号全部保留；真实同步无错误、菜鸟在线刷新200，目前无已确认失效提醒。失效/重登恢复在隔离测试账号验证，未故意破坏手机登录。main已推送，v0.9.18正式Release已发布并设Latest，附件172794432字节，与手机安装包相同。最终交付outputs/ExpressAssistant-v0.9.18.apk，私有备份及脱敏验收在outputs/.private/login-status-20261122/。
+
 - 2026-11-17：0.9.17/code31改为一次显示一个身份码，卡片下方独立按钮行，刷新左侧「切换」直接切换菜鸟/淘宝，本机保存上次平台并在冷启动恢复。卡片与按钮整体在内容区域居中偏上48dp，首次默认菜鸟。只绘制/刷新当前平台，切换取消旧请求并清除旧条码视图。用户反馈部分机器多码同时显示出错，具体机型和根因尚未复现。79单测、lintRelease零错误（465警告/1提示）和签名整合构建通过；K70已覆盖，冷启动与升级保留淘宝选择，用户确认切换显示正常。2f32140已推送main，v0.9.17正式Release已发布，附件为已部署K70的172777855字节整合APK；本地交付仅留outputs/ExpressAssistant-v0.9.17.apk。
 
 - 2026-11-16：0.9.16/code30增加独立淘宝XNS身份码，页面按用户最终要求同时展示上菜鸟下淘宝，两张卡片各自刷新，倒计时统一纯MM:SS。本人淘宝重登后新接口SUCCESS、K70实屏双码通过，38件/四平台各1账号保留。79单测、lintRelease零错误（465警告/1提示）、签名整合构建通过；ec33596已提交推送，提交后重建最终整合APK并再次覆盖手机、冷启动状态通过；v0.9.16正式Release已发布并设Latest，附件172777855字节完整上传；上传慢的后续对照已完成：CLI/系统走7897，上传经Vless、API单独DIRECT。GitHub真实32MiB gh上传两轮直连16.61/15.21s、代理56.09/10.58s，代理能高速但波动大，不能断言一直慢或固定配置错误；系统代理/节点未改，临时草稿与数据已清理，正式Release未变。证据在私有输出目录github-upload-route-test.json。最终APK为outputs/ExpressAssistant-v0.9.16.apk。淘宝码依赖淘宝登录态与网络，不能使用菜鸟材料或把CS8改前缀当成XNS。
@@ -45,10 +47,8 @@
 
 ## Active Work
 
-- 2026-11-22：用户要求修正登录失效无提醒，并明确要求 Pixel 风格、先看样式、不要马上部署。样式预览 `outputs/login-status-pixel-preview.html` 已获用户确认，用户回复「可以，部署吧」，授权实现、构建、发布及覆盖 K70。已确认购物平台账号摘要只显示绑定数量、账号面板把启用状态写成“同步中”，SyncEngine 错误未成为持久账号登录状态；实现完成：按账号持久登录状态、Pixel 主页/设置提醒、重新登录恢复与迟到请求隔离，82单测、lintRelease零错误及3项隔离模拟器集成测试通过；原生明暗色主页/设置/账号面板与3项集成测试均通过，v0.9.18/code32待最终整合包、发布及K70验收。升级前备份在outputs/.private/login-status-20261122/，41件、四平台各1账号。后续实现需区分明确认证失败与网络失败，并在重新登录后清除同账号提醒，保留旧快递和账号启用状态。
 
-- 2026-11-16 本轮需求已完成：用户回复「验证完成,直接发布即可」后，v0.9.15转正式Release并设Latest；附件仍为已部署K70的172761471字节整合APK。默认包内SDK登录，原版已停用且无需重新安装；未再改动手机、替换附件或重跑测试。用户验收与发布说明已更新到README和设计文档。
-- 手机维护恢复入口：ADB设备按实际在线状态选择（本轮为adb-dcc50feb-cMg7fx._adb-tls-connect._tcp）；桌面28768→手机18768验收转发已移除。令牌只从应用no_backup/phone-control.token由Root读入内存，不输出。升级前备份及脱敏证据保存在outputs/.private/cainiao-runtime/single-package-20261116/。
+- 手机维护恢复入口：ADB设备按实际在线状态选择（2026-11-22为K70 192.168.31.118:5555）；本轮使用自动分配的桌面端口→手机18768验收，结束已移除转发。令牌只从应用no_backup/phone-control.token由Root读入内存，不输出。升级前备份及脱敏证据保存在outputs/.private/cainiao-runtime/single-package-20261116/。
 
 - 本聊天曾创建干净构建worktree `/Users/meta/.codex/worktrees/express-auto-import-build/ExpressAssistant`，应用将其设为主检出，archive_worktree拒绝归档；attach_worktree也拒绝原主仓库。该worktree已对齐83b5f3d且构建产物已删除。继续修改使用固定主目录 `/Users/meta/Project/Workspaces/ExpressAssistant`；构建worktree仍待应用切换主检出后归档。
 
@@ -90,4 +90,4 @@
 - `docs/design/package-state.md`：终态证据、未知状态与缓存回归。
 - `docs/design/cainiao-login.md`：手机号短信登录、SSO 与续登的可行性和未验证边界。
 
-- `docs/design/pixel-settings.md`：用户批准的“快递”品牌、Google Settings分组设置与图标替换范围。
+- `docs/design/pixel-settings.md`：用户批准的“快递”品牌、Google Settings分组设置、登录失效持久状态/主页提醒与重新登录交互。
