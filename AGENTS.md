@@ -33,7 +33,7 @@
 
 - 2026-11-07：Android v0.9.6/20实现菜鸟会员自动续登并签名覆盖K70。原生autologin使用本人refreshToken与消费者路由、完整BaseLoginRequest；加密保存会员对象/设备上下文，先保存轮换凭证再替换Cookie。12小时检查、剩余13小时续登；在线SESSION_EXPIRED自动恢复后只重试一次。真实旧Cookie失效→App内续登→在线200/材料200及冷启动再次续登通过，官方菜鸟进程未运行，手机临时探针已删除；203件/JD/TB/PDD各1账号保留。37单测、lint零错误、release签名通过。当前必须保留官方菜鸟8.11.1023安装作为签名运行时，不启动其进程、无需ADB；独立首次短信登录、无官方运行时、跨30天与驿站扫码未验收。详见cainiao-login.md。
 - 2026-11-06：Android v0.9.5/19 已签名覆盖 K70（dcc50feb），只保留莫奈取色；主题入口、温暖纸感、自定义/昼夜独立配置、纸纹与衬线处理均删除。启动时只移除旧主题11键，刷新现有小组件为默认无衬线布局；不再因主题重建主页。实屏设置首项“我的地址”、主题按钮消失；202件、JD/TB/PDD各1账号、有效在线身份会话保留。30单测、lint零错误、release构建与APK签名通过。
-- 主项目固定目录 `/Users/meta/Project/Workspaces/ExpressAssistant`。交付APK、API连接文件、官方APK和研究报告均归项目 `outputs/`（Git忽略）；私有研究会话在 `outputs/.private/cainiao-runtime/`，不再依赖旧聊天x/outputs或临时runtime。18767原型预览已改用新路径；正式PC服务器已迁至ROG的18769；Mac的server/data与运行环境已删除。
+- 主项目固定目录 `/Users/meta/Developer/ExpressAssistant`。交付APK、API连接文件、官方APK和研究报告均归项目 `outputs/`（Git忽略）；私有研究会话在 `outputs/.private/cainiao-runtime/`，不再依赖旧聊天x/outputs或临时runtime。18767原型预览已改用新路径；正式PC服务器已迁至ROG的18769；Mac的server/data与运行环境已删除。
 - 2026-11-06：Android v0.9.4/18 已签名覆盖 K70（dcc50feb），正式交付仍为主应用；官方菜鸟已获授权临时安装供登录恢复和研究。202件、JD/TB/PDD各1账号保留；本轮实屏3已发货/1未发货。普通快递同步仍沿0.9.2快路径（此前API5.85秒、下拉6.02秒）。Android30项、lint、release构建通过。
 - v0.9.4修复商品详情疯狂闪烁：旧轨迹/取件码/ETA分次回写与displayedItem不一致，onResume反复recreate，实机短时间98次重建。DetailState统一回写并读取已保存基线，后续就地重绘保留滚动。TB已发货、PDD已发货/未发货/完成四类实屏均只创建1次、当前实例0销毁，连续屏幕稳定；详见package-state.md。
 - 新订单漏显示：TB已付款但尚无SSR运单的订单被丢弃；PDD最新10单来自HTML内rawData.ordersStore.initOdersList，旧版仅抓后续XHR。已保存orderOnly待发货订单，按平台/账号/订单匹配正式运单替换、保留历史及签收证据。不要用PDD orders/currentList摘要替代initOdersList完整订单。
@@ -50,7 +50,7 @@
 
 - 手机维护恢复入口：ADB设备按实际在线状态选择（2026-11-22为K70 192.168.31.118:5555）；本轮使用自动分配的桌面端口→手机18768验收，结束已移除转发。令牌只从应用no_backup/phone-control.token由Root读入内存，不输出。升级前备份及脱敏证据保存在outputs/.private/cainiao-runtime/single-package-20261116/。
 
-- 本聊天曾创建干净构建worktree `/Users/meta/.codex/worktrees/express-auto-import-build/ExpressAssistant`，应用将其设为主检出，archive_worktree拒绝归档；attach_worktree也拒绝原主仓库。该worktree已对齐83b5f3d且构建产物已删除。继续修改使用固定主目录 `/Users/meta/Project/Workspaces/ExpressAssistant`；构建worktree仍待应用切换主检出后归档。
+- 本聊天曾创建干净构建worktree `/Users/meta/.codex/worktrees/express-auto-import-build/ExpressAssistant`，应用将其设为主检出，archive_worktree拒绝归档；attach_worktree也拒绝原主仓库。该worktree已对齐83b5f3d且构建产物已删除。继续修改使用固定主目录 `/Users/meta/Developer/ExpressAssistant`；构建worktree仍待应用切换主检出后归档。
 
 - 会员续登已接入并完成旧Cookie失效恢复/冷启动验收，0.9.15 起使用包内运行时。后续仍需长期跨天/跨30天观察、真实站点扫码；不要将一次滑动续期成功当成永久免登录。
 

@@ -18,7 +18,7 @@
 Authorization: Bearer YOUR_TOKEN
 ```
 
-本机令牌保存在 `/Users/meta/Project/Workspaces/ExpressAssistant/server/data/config.json` 的 `token` 字段。本次交付还附有私有文件 `express-api.env`，含已填写的地址与令牌，可与本文一起提供给获授权的 AI 执行环境。不要把它提交到 Git 或公开文档。本文没有令牌明文。
+本机令牌保存在 `/Users/meta/Developer/ExpressAssistant/server/data/config.json` 的 `token` 字段。本次交付还附有私有文件 `express-api.env`，含已填写的地址与令牌，可与本文一起提供给获授权的 AI 执行环境。不要把它提交到 Git 或公开文档。本文没有令牌明文。
 
 在 shell 中加载配置（把路径改为私有文件所在位置）：
 
