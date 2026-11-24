@@ -55,7 +55,6 @@ class DetailActivity : AppCompatActivity() {
         binding = ActivityDetailBinding.inflate(layoutInflater)
         setContentView(binding.root)
         EdgeToEdge.apply(this, binding.root)
-        Paper.apply(this, binding.root, binding.toolbar)
         binding.toolbar.setNavigationOnClickListener { finish() }
         val rawItem = intent.getStringExtra("item")
         val mailNo = intent.getStringExtra("mailNo")
@@ -135,7 +134,9 @@ class DetailActivity : AppCompatActivity() {
                 var detail = if (item.orderOnly) ExpressDetail(item.mailNo, item.companyName, item.state, false) else when (item.source) {
                     "manual" -> {
                         val cached = Store.manualTraces(this@DetailActivity, item.mailNo)
-                        if (cached != null) ExpressDetail(item.mailNo, item.companyName, item.state, item.isCompleted(), cached, item.eta)
+                        val refreshForCainiao = !item.isCompleted() && item.pickupQueryStatus in setOf("", "no_session", "login_expired") &&
+                            com.halo.expressassistant.api.CainiaoRenewal.snapshot(this@DetailActivity).canAutoRenew
+                        if (cached != null && !refreshForCainiao) ExpressDetail(item.mailNo, item.companyName, item.state, item.isCompleted(), cached, item.eta)
                         else com.halo.expressassistant.api.ManualPackages.refresh(this@DetailActivity, item)
                     }
                     "jd" -> {
@@ -196,9 +197,7 @@ class DetailActivity : AppCompatActivity() {
                     "pdd" -> {
                         // 轨迹缓存：3 小时内直接显示，不重新走 WebView 流程
                         val cached = Store.pddTraces(this@DetailActivity, item.mailNo)
-                        val traces = cached ?: PddTraceFetcher.fetchWith(this@DetailActivity, item, pddCookies).also { r ->
-                            if (r != null) PddTraceFetcher.applyTraceToItem(this@DetailActivity, item, r)
-                        }
+                        val traces = cached ?: PddTraceFetcher.fetchWith(this@DetailActivity, item, pddCookies)
                         ExpressDetail(
                             mailNo = item.mailNo,
                             companyName = item.companyName,
@@ -226,7 +225,7 @@ class DetailActivity : AppCompatActivity() {
                     detail = KuaiDi100.fetchDetail(this@DetailActivity, item)
                 }
                 val current = Store.items(this@DetailActivity).firstOrNull { it.mailNo == item.mailNo } ?: item
-                val reconciled = DetailState.reconcile(current, detail)
+                val reconciled = if (current.source == "manual") current else DetailState.reconcile(current, detail)
                 if (reconciled != current) {
                     Store.saveItems(this@DetailActivity, Store.items(this@DetailActivity).map {
                         if (it.mailNo == reconciled.mailNo) reconciled else it
@@ -273,7 +272,6 @@ class DetailActivity : AppCompatActivity() {
             cardElevation = 0f
             setCardBackgroundColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.colorBackground, Color.TRANSPARENT))
         }
-        Paper.styleCard(this, card)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -381,6 +379,32 @@ class DetailActivity : AppCompatActivity() {
         content.addView(holder)
         refreshGoods(item)
 
+        if (item.pickupLabel().isNotBlank()) content.addView(TextView(this).apply {
+            text = item.pickupLabel()
+            textSize = 17f
+            setTextColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.colorPrimary, Color.BLUE))
+            setPadding(dp(18), dp(8), dp(18), dp(12))
+            setTextIsSelectable(true)
+        })
+        val pickupStatusText = when (item.pickupQueryStatus) {
+            "authorization_required" -> "菜鸟取件码需完成本人授权"
+            "verification_required" -> "菜鸟取件码需完成本人验证"
+            "login_expired", "no_session" -> "菜鸟登录失效，暂未取得取件码"
+            "ok", "" -> ""
+            else -> if (item.pickupCode.isBlank()) "暂未取得菜鸟取件码，稍后自动重试" else ""
+        }
+        if (pickupStatusText.isNotBlank() && item.isAwaitingPickup()) content.addView(TextView(this).apply {
+            text = pickupStatusText
+            textSize = 13f
+            setPadding(dp(18), 0, dp(18), dp(8))
+        })
+        if (item.trackingNumber.isNotBlank() && item.trackingNumber != item.mailNo) content.addView(TextView(this).apply {
+            text = "运单号：${item.trackingNumber}"
+            textSize = 13f
+            setPadding(dp(18), 0, dp(18), dp(8))
+            setTextIsSelectable(true)
+        })
+
         val progress = displayProgress(item)
         val statusRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -422,10 +446,10 @@ class DetailActivity : AppCompatActivity() {
             }
             headerProgressBar = bar
             content.addView(bar)
-            val eta = item.eta
+            val eta = item.etaLabel()
             if (eta.isNotBlank()) {
                 val etaText = TextView(this).apply {
-                    text = "预计送达：$eta"
+                    text = eta
                     textSize = 14f
                     setTextColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.colorPrimary, Color.BLUE))
                     layoutParams = LinearLayout.LayoutParams(

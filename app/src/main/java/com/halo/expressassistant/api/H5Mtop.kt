@@ -9,7 +9,11 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /** A private, manually managed cookie header avoids duplicate H5 tokens. No request logging. */
-internal class H5Mtop(header: String) {
+internal class H5Mtop(
+    header: String,
+    private val pageUrl: String = "https://h5.m.taobao.com/",
+    private val extraHeaders: Map<String, String> = emptyMap()
+) {
     private val cookies = linkedMapOf<String, String>()
     val cookieHeader: String get() = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
@@ -22,11 +26,13 @@ internal class H5Mtop(header: String) {
     }
 
     private fun request(url: okhttp3.HttpUrl): JSONObject {
-        val req = Request.Builder().url(url)
+        val request = Request.Builder().url(url)
             .header("User-Agent", UA).header("Cookie", cookieHeader)
-            .header("Origin", "https://h5.m.taobao.com")
-            .header("Referer", "https://h5.m.taobao.com/")
-            .header("Accept", "application/json").build()
+            .header("Origin", pageUrl.toHttpUrl().let { "${it.scheme}://${it.host}" })
+            .header("Referer", pageUrl)
+            .header("Accept", "application/json")
+        extraHeaders.forEach { (name, value) -> request.header(name, value) }
+        val req = request.build()
         try {
             return client.newCall(req).execute().use { r ->
                 if (!r.isSuccessful) throw CainiaoServiceException(CainiaoServiceException.Kind.REJECTED)

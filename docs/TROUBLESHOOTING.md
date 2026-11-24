@@ -5,13 +5,9 @@
 - 常见原因：路由器“客户端隔离”（Mac 能到网关、到不了其他客户端）；或双方不在同一网段
 - 解决：手机开热点，Mac 连热点后 `adb connect <网关>:5555`（网关即手机 IP）
 
-## 主题切换后主界面不变
-- 已修复：MainActivity.onResume 对比 `Themes.current`，变了自动 `recreate()`
-- 其他已打开页面同理：切换主题后重新打开即生效
-
-## 纸纹把卡片撑出大片空白
-- 原因：BitmapDrawable 的固有尺寸（500px）把 wrap_content 卡片最小高度撑大
-- 解决：`TiledTextureDrawable` 返回 `getIntrinsicWidth/Height = -1`、`getMinimumWidth/Height = 0`
+## 旧主题升级
+- v0.9.5 起固定莫奈取色，已删除主题选择、暖色衬线与纸纹。
+- 应用启动时只移除旧主题偏好并刷新小组件；不清空其他应用数据。
 
 ## AI 运输进度显示 0%
 - 原因：旧版本把 AI 误判的 0 存下且 `aiProgressAt` 为空，永不重算

@@ -22,7 +22,7 @@ import com.google.android.material.color.MaterialColors
 import com.halo.expressassistant.data.Store
 
 /**
- * 云雀内置浏览器：打开原平台订单页 + 通用网页浏览。
+ * 内置浏览器：打开原平台订单页 + 通用网页浏览。
  * 登录态策略（为什么不会反复要求登录）：
  *  1. 启动时把「账号 Cookie（同步回存的）+ Cookie 罐（上次浏览结束时的页面会话）」注入 WebView；
  *  2. 每次页面加载完把当前渠道的全部 Cookie 收进罐里持久化（session cookie 本来活不过进程被杀，
@@ -307,7 +307,9 @@ class SourceWebActivity : AppCompatActivity() {
         val account = accountId.takeIf { it.isNotBlank() }
             ?.let { id -> Store.accounts(this, Store.CH_JD).firstOrNull { it.id == id } }
         if (account != null) {
-            Store.updateAccount(this, Store.CH_JD, account.copy(payload = Store.cookiePayload(cookieStr)))
+            Store.updateAccountPayload(this, Store.CH_JD, account, Store.cookiePayload(cookieStr))?.let {
+                com.halo.expressassistant.data.AccountLoginStore.signedIn(this, Store.CH_JD, it.id)
+            }
         } else {
             Store.saveJdCookies(this, cookieStr)
         }

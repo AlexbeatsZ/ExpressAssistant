@@ -6,9 +6,11 @@ import android.util.Log
 import com.halo.expressassistant.api.EtaParser
 import com.halo.expressassistant.api.TbOrders
 import com.halo.expressassistant.api.CainiaoPackages
+import com.halo.expressassistant.api.ManualPackages
 import com.halo.expressassistant.api.XiaomiSync
 import com.halo.expressassistant.data.ExpressItem
 import com.halo.expressassistant.data.JdGoods
+import com.halo.expressassistant.data.AccountLoginStore
 import com.halo.expressassistant.data.Store
 import com.halo.expressassistant.data.OrderRecords
 import kotlinx.coroutines.Dispatchers
@@ -73,7 +75,9 @@ object SyncEngine {
                     XiaomiSync.syncAccount(act, account)
                 } catch (e: Throwable) {
                     Log.w(TAG, "xiaomi sync fail: $e")
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     err = e.message ?: "小米同步失败"
+                    AccountLoginStore.record(act, Store.CH_XIAOMI, account, false, err)
                 }
             }
             xiaomiItems = Store.items(act).filter { it.source == "xiaomi" }
@@ -156,7 +160,10 @@ object SyncEngine {
                 latestTime = latestTime,
                 addressId = old.addressId,
                 receiptConfirmed = item.receiptConfirmed || old.receiptConfirmed || old.isCompleted(),
-                pickupCode = item.pickupCode.ifBlank { old.pickupCode }
+                pickupCode = item.pickupCode.ifBlank { old.pickupCode },
+                pickupHint = old.pickupHint, trackingNumber = old.trackingNumber,
+                pickupCodeSource = old.pickupCodeSource, pickupQueryStatus = old.pickupQueryStatus, pickupQueriedAt = old.pickupQueriedAt,
+                station = item.station.ifBlank { old.station }
             )
         }
         // 聚合取件码：从最新轨迹文本解析
@@ -169,30 +176,29 @@ object SyncEngine {
         }
         // 同步合并后立即回填「已抓取」的 PDD 轨迹到卡片（列表接口只有状态提示，
         // 避免每次同步把物流页回写的 latestText 覆盖回「交易成功」）
-        val pddPrompts = setOf("交易成功", "待评价", "已评价", "待发货", "待收货", "待成团", "待付款", "已取消", "退款成功", "交易关闭")
         val withTrace = withPickup.map { item ->
-            if (item.source != "pdd" || item.latestText !in pddPrompts) return@map item
+            if (item.source != "pdd") return@map item
             val pts = Store.pddTraces(act, item.mailNo) ?: return@map item
-            if (pts.isEmpty()) return@map item
-            val last = pts.last()
-            item.copy(
-                latestText = last.context.take(220).ifBlank { item.latestText },
-                latestTime = last.time.ifBlank { item.latestTime },
-                pickupCode = item.pickupCode.ifBlank { GoodsPresentation.pickupCodeFrom(last.context) ?: item.pickupCode }
-            )
+            DetailState.reconcile(item, com.halo.expressassistant.data.ExpressDetail(
+                item.mailNo, item.companyName, item.state, item.isCompleted(), pts))
         }
         // 已移除的快递不再复活：合并结果统一过滤用户手动移除过的单号
         // （PDD 并集/各渠道重抓会把服务端仍存在的单再次带回，此前从不查隐藏名单）
         val hiddenNos = Store.xiaomiHidden(act).mapTo(HashSet()) { it.mailNo }
         val withCainiao = if (cnResult?.first != null) CainiaoPackages.merge(withTrace, cnResult.first!!) else withTrace
-        val finalSaved = (if (hiddenNos.isEmpty()) withCainiao else withCainiao.filterNot { it.mailNo in hiddenNos })
+        val withManual = ManualPackages.refreshAll(act, withCainiao.filterNot { it.mailNo in hiddenNos })
+        val nativeChecked = com.halo.expressassistant.api.CainiaoParcelSync.refresh(act, withManual)
+        val finalSaved = nativeChecked
             .map {
                 if (it.isCompleted()) it.copy(state = 3, stateNum = 107, pickupCode = "", receiptConfirmed = true)
                 else if (it.state == 4 || it.stateNum in 108..111) it.copy(pickupCode = "") else it
             }
-        Store.saveItems(act, finalSaved)
-        Log.i(TAG, "merged total=${finalSaved.size} statuses=$statuses")
-        Report(statuses, finalSaved.size)
+        val saved = Store.updateItems(act) { current ->
+            val hidden = Store.xiaomiHidden(act).mapTo(HashSet()) { it.mailNo }
+            ManualPackages.retainManualEdits(oldItems, finalSaved, current).filterNot { it.mailNo in hidden }
+        }
+        Log.i(TAG, "merged total=${saved.size} statuses=$statuses")
+        Report(statuses, saved.size)
     }
 
     /** 后台任务：商品短名批量优化（不阻塞同步）；每小批完成即落库并回调 onBatch（渐进式外显，建议 reload） */
@@ -234,7 +240,11 @@ object SyncEngine {
         for (account in Store.accounts(act, Store.CH_TAOBAO).filter { it.enabled }) {
             try { CainiaoPackages.fetch(account).forEach { items[it.mailNo] = it } }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) { error = e.message ?: "菜鸟包裹读取失败" }
+            catch (e: Exception) {
+                error = e.message ?: "菜鸟包裹读取失败"
+                if (e is com.halo.expressassistant.api.CainiaoServiceException && e.kind == com.halo.expressassistant.api.CainiaoServiceException.Kind.LOGIN_EXPIRED)
+                    AccountLoginStore.record(act, Store.CH_TAOBAO, account, false, "淘宝登录已失效")
+            }
         }
         return (if (items.isEmpty() && error != null) null else items.values.toList()) to error
     }
@@ -245,8 +255,8 @@ object SyncEngine {
         val allItems = ArrayList<ExpressItem>()
         var err: String? = null
         val observed = HashSet<String>()
-        try {
-            for (account in accounts) {
+        for (account in accounts) {
+            try {
                 val cookies = Store.cookieOf(account.payload)
                 if (cookies.isBlank()) continue
                 // 1) 订单列表（最多翻 3 页，按订单号去重）
@@ -256,6 +266,7 @@ object SyncEngine {
                     batch.forEach { orders.putIfAbsent(it.orderId, it) }
                     if (batch.size < 10) break
                 }
+                AccountLoginStore.record(act, Store.CH_TAOBAO, account, true, null)
                 orders.values.filter { it.tradeStatus.contains("CLOSED") || it.tradeStatus == "WAIT_BUYER_PAY" || it.statusText == "交易关闭" }
                     .forEach { observed.add(OrderRecords.key("taobao", account.id, it.orderId)) }
                 // 2) 过滤有物流的订单（跳过交易关闭/待付款）
@@ -306,14 +317,15 @@ object SyncEngine {
                 }
                 allItems.addAll(parcels.mapNotNull { p -> toItem(p, account) })
                 allItems.addAll(pending)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                err = e.message ?: "淘宝同步失败"
+                AccountLoginStore.record(act, Store.CH_TAOBAO, account, false, err)
+                Log.w(TAG, "tb sync fail: $e")
             }
-            return Triple(allItems, err, observed)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            Log.w(TAG, "tb sync fail: $e")
-            return Triple(allItems, e.message ?: "淘宝同步失败", observed)
         }
+        return Triple(allItems, err, observed)
     }
 
     /** 拼多多：逐账号**流式**抓取——每增量一批（订单+商品图）先上报（实时上涨），最终返回全量 */

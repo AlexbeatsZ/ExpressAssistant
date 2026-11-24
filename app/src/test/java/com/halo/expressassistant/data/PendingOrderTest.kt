@@ -38,6 +38,7 @@ class PendingOrderTest {
 
     @Test fun jsonAndJsonpListsWorkAndSessionErrorsAreNotEmptySuccess() {
         val body = """{"ret":["SUCCESS::调用成功"],"data":{"result":"{\"mainOrders\":[{\"id\":\"order-1\",\"extra\":{\"tradeStatus\":\"WAIT_SELLER_SEND_GOODS\"},\"statusInfo\":{\"text\":\"买家已付款\"}}]}"}}"""
+        assertThrows(IllegalStateException::class.java) { TbOrders.parseBoughtList("""{"data":{}}""") }
         assertTrue(TbOrders.parseBoughtList(body).single().isPaidUnshipped())
         assertTrue(TbOrders.parseBoughtList("cb($body)").single().isPaidUnshipped())
         assertThrows(IllegalStateException::class.java) {

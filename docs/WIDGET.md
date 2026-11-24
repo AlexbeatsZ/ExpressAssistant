@@ -2,7 +2,7 @@
 
 > 本文档覆盖小组件**全部事宜**：用户功能、实现原理、渲染引擎、刷新链路、主题联动、交互、设置、已知局限、
 > 两轮 HyperOS 4.0 排障实录（含证据链）、验证工具箱、文件清单。
-> 核心代码：`widget/ExpressWidgetProvider.kt`；配置：`res/xml/express_widget_info.xml`；布局：`res/layout/widget_express_*`（5 个）。
+> 核心代码：`widget/ExpressWidgetProvider.kt`；配置：`res/xml/express_widget_info.xml`；布局：`res/layout/widget_express_*`（普通、紧凑、小卡及 loading）。
 > 回归工具：`research/widget_bench.py`（注入任意件数 → 渲染 → 截图像素分析，见 §十二）。
 
 ---
@@ -14,8 +14,8 @@
 | 维度 | 取值 |
 |---|---|
 | Provider | `ExpressWidgetProvider : AppWidgetProvider` |
-| 布局族 | 网格（list / list_lark）与摘要（small / small_lark），+ loading 初始布局 |
-| 主题联动 | `theme=="lark"` 或 `colorScheme=="warm"` → lark（暖纸衬线）变体 |
+| 布局族 | 默认无衬线网格（list / list_compact）与摘要（small），+ loading 初始布局 |
+| 外观 | 固定默认无衬线布局；`values-night` 跟随桌面深色模式 |
 | 数据源 | `Store.items()`（SharedPreferences JSON，本地无网络） |
 | 刷新 | 系统 30min 周期 + 数据/设置变更即时 + 手动刷新按钮 + 打开 App 兜底 |
 | 交互 | 每格点开详情、空位"+"添加、头部刷新/打开、小卡整卡打开 |
@@ -40,8 +40,7 @@
    件数超过网格容量（中卡 24 / 大卡 32）时**占满最大网格**并展示优先级最高的前 N 件。
 4. **点击行为**：格子→快递详情页；"+"→添加；头部刷新按钮→四源同步（前台静默 / 后台拉起同步后自动回桌面）；头部打开按钮→主界面；小卡整卡→主界面。
 5. **状态筛选**：设置页「小组件」卡片三开关（派送中/运输中/未发货，默认全开），已完成/异常固定不显示。
-6. **主题联动**：温暖纸感（lark 主题或暖色配色）→ 暖米纸底 + 衬线字体变体；莫奈取色 → 普通白卡。
-   夜间由 `values-night` 自动切深色（卡片 `#1C1713` / `#1C1E1E`），**RemoteViews 在桌面进程 inflate，跟的是桌面的深色模式**。
+6. **固定外观**：只保留默认无衬线布局，使用现有 `widget_*` 色板。夜间由 `values-night` 自动切深色，**RemoteViews 在桌面进程 inflate，跟随桌面的深色模式**。
 
 ---
 
@@ -145,11 +144,9 @@ val medium = width >= 300                     // 3 行网格
 // 其余 → small 摘要布局
 ```
 
-### 2. 主题判定（选布局）
-```kotlin
-val lark = Store.theme(context) == Themes.LARK || Store.colorScheme(context) == "warm"
-```
-> ⚠️ 默认配置（theme=monet 未改 + 配色默认 warm）**默认就走 lark 变体**；只有设置里把配色改成"莫奈取色"才用普通版。lark 判定**不看**衬线开关，但 lark 布局本身硬编码 serif。
+### 2. 布局选择
+
+2026-11-06 起移除暖纸衬线分支。网格按行高选择普通版或紧凑版；小卡使用默认摘要布局，不再读取主题偏好。
 
 ### 3. 数据过滤
 ```kotlin
@@ -242,7 +239,7 @@ val showTime= rowDp >= ROW_DP_MIN_3LINE /* 34 */  // 连紧凑版都塞不下才
 | 2 | 组件尺寸变化 | `onAppWidgetOptionsChanged` → 重渲染 | 拖拽缩放实时重排网格 |
 | 3 | 数据保存 | `Store.saveItems` | 任何渠道同步完成写库后即时刷新 |
 | 4 | 登录态清理 | `Store.clearLogin`（含渠道退出） | 退登后立刻重渲染 |
-| 5 | 主题/配色变更 | `Store.saveTheme` / `saveColorScheme` | 换主题即时切布局 |
+| 5 | 首次升级清理旧主题 | `App.onCreate` / `clearLegacyThemePreferences` | 切回默认无衬线布局 |
 | 6 | 小组件显示开关 | `saveWidgetShowDelivering/Shipped/NotShipped` | 三个开关各自触发 |
 | 7 | 手动刷新按钮 | `ACTION_REFRESH` → `onReceive` | **四源同步**：App 在前台（`App.topActivity` 生命周期跟踪）→ 静默 `SyncEngine.sync` 不跳转；不在前台 → 拉起 `MainActivity`（`sync_now` extra）同步完成 `moveTaskToBack` 自动回桌面 → `updateAll` |
 | 8 | 打开 App | `MainActivity.onResume` → `updateAll` | 2026-08-20 新增，兜底 HyperOS 冻结导致的周期刷新失效 |
@@ -284,15 +281,12 @@ val showTime= rowDp >= ROW_DP_MIN_3LINE /* 34 */  // 连紧凑版都塞不下才
 3. **RemoteViews 限制下的设计**：无 `RemoteViewsService`/集合视图，靠 4×8=32 个静态 cell 裁剪出任意 ≤32 格动态网格；所有 view id 用 `getIdentifier` 动态解析。
 4. **已完成/异常固定不显示**（设置页明示）；`smallSummary` 的 `· K 异常` 分支实际因过滤永远为 0（逻辑残留，未清）。
 5. **无商品信息**：商品图/AI 短名/取件码均未上组件（RemoteViews 加载网络图需额外链路）——用户确认维持现状。
-6. **主题判定与 App 不完全一致**：App 内 custom 主题还受衬线开关影响，widget 只看 theme/colorScheme；默认 warm 配色导致**默认即 lark 布局**。
+6. **已清理（2026-11-06）**：App 固定莫奈取色，小组件只保留默认无衬线布局，不再读取旧 warm/lark/custom 配置。
 7. ~~行高均分~~ **已修复（2026-08-20 第二轮）**：4 行改 `0dp + layout_weight=1`，可见行等分卡片高度；
    原先 `wrap_content` 导致"内容堆顶部、底部空 38dp"与"3 行时末行被裁"（§十一.1）。
 8. ~~点击 JSON 直传~~ **已改**：cell 点击传 `mailNo`，DetailActivity 兼容两种 extra；requestCode 按 `widgetId*100+index+1` 错开防 PendingIntent 复用串数据。
 9. **`targetCellWidth=4/targetCellHeight=2` 是建议落格**，实际由桌面按 resize 约束决定；`minWidth=110dp` 保证小卡能放。
-10. ~~无夜间独立配色~~ **此条原描述有误，已更正**：`values-night/colors.xml` 里 `widget_*`（普通版）与
-    `widget_lark_*`（暖纸版）**都有夜间色且实测生效**——RemoteViews 在桌面进程 inflate，跟随桌面深色模式。
-    实测卡片底像素 `#1B1713` ≈ `widget_lark_card` 夜间值 `#1C1713`。
-    真实局限是：夜间用的是**固定色板**，不跟随莫奈取色，也不跟随 App 内 0–200 纸感强度。
+10. **桌面深色模式**：`values-night/colors.xml` 的 `widget_*` 提供夜间色板。小组件跟随桌面深色模式；色板不随壁纸动态变化。
 11. **action 截断的真实边界比原结论宽**：§十 曾推断"阈值在 110~160 之间"，
     但第二轮实测 **24 格满绑定（约 220 action）在 HyperOS 4.0 上完整渲染**（8×3 全部显示、编号 01–24 齐全）。
     更可能的真凶是当年每格 PendingIntent 直传整件 JSON 造成的**序列化体积**，而非 action 条数。
@@ -304,6 +298,8 @@ val showTime= rowDp >= ROW_DP_MIN_3LINE /* 34 */  // 连紧凑版都塞不下才
     换 layout id（宽松↔紧凑档切换）反而会强制重新 inflate，天然干净。
 
 ---
+
+> 后续排障实录记录当时的版本与资源名；暖纸衬线布局已于 2026-11-06 移除。
 
 ## 十、2026-08-20 排障实录（一）："10 件只显示 5 件"
 

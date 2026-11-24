@@ -2,8 +2,11 @@ package com.halo.expressassistant.api
 
 import android.content.Context
 import com.halo.expressassistant.data.CainiaoSessionStore
+import com.halo.expressassistant.data.PhoneProvisioning
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -14,7 +17,7 @@ object CainiaoRenewal {
     private const val DAY_MS = 86_400_000L
 
     data class Snapshot(val material: CainiaoIdentity.Material?, val online: CainiaoIdentity.OnlineCode?,
-        val lastAttemptAtMs: Long, val error: CainiaoServiceException.Kind?)
+        val lastAttemptAtMs: Long, val error: CainiaoServiceException.Kind?, val canAutoRenew: Boolean = false)
 
     fun snapshot(ctx: Context): Snapshot {
         val session = CainiaoSessionStore.read(ctx) ?: return Snapshot(null, null, 0, CainiaoServiceException.Kind.NO_SESSION)
@@ -24,7 +27,8 @@ object CainiaoRenewal {
             if (value.matches(Regex("CS8[0-9]{11,19}[A-F]"))) CainiaoIdentity.OnlineCode(value, it.optLong("expiresAtMs")) else null
         }
         val error = runCatching { CainiaoServiceException.Kind.valueOf(session.optString("lastRefreshError")) }.getOrNull()
-        return Snapshot(material, online, session.optLong("lastRefreshAttemptAtMs"), error)
+        return Snapshot(material, online, session.optLong("lastRefreshAttemptAtMs"), error,
+            session.optJSONObject("native") != null && !session.optBoolean("memberNeedsLogin") && CainiaoMember.canRenew(session.optJSONObject("member")))
     }
 
     private fun recordFailure(ctx: Context, session: JSONObject, error: CainiaoServiceException): Nothing {
@@ -39,14 +43,139 @@ object CainiaoRenewal {
         CainiaoSessionStore.save(ctx, session)
     }
 
+    /** Called only while holding mutex, so token replacement and read retries cannot race. */
+    private fun renewMember(ctx: Context, session: JSONObject, force: Boolean = false): Boolean {
+        val member = session.optJSONObject("member") ?: return false
+        val device = session.optJSONObject("native") ?: return false
+        if (session.optBoolean("memberNeedsLogin") || !CainiaoMember.canRenew(member)) {
+            session.put("memberNeedsLogin", true).put("lastSessionRenewError", CainiaoServiceException.Kind.LOGIN_EXPIRED.name)
+            CainiaoSessionStore.save(ctx, session)
+            throw CainiaoServiceException(CainiaoServiceException.Kind.LOGIN_EXPIRED)
+        }
+        if (!force && !CainiaoMember.needsRenewal(member)) return false
+        session.put("lastSessionRenewAttemptAtMs", System.currentTimeMillis())
+        CainiaoSessionStore.save(ctx, session)
+        try {
+            val fresh = CainiaoMemberRenewal.renew(ctx, member, device)
+            // Save rotated credentials before parsing cookies or requesting another API.
+            session.put("member", fresh).put("lastSessionRenewedAtMs", System.currentTimeMillis())
+                .put("lastSessionRenewError", "").put("memberNeedsLogin", false)
+            CainiaoSessionStore.save(ctx, session)
+            session.put("cookie", CainiaoMember.mergeCookies(session.getString("cookie"), fresh))
+                .put("lastRefreshError", "")
+            CainiaoSessionStore.save(ctx, session)
+            return true
+        } catch (e: CainiaoServiceException) {
+            session.put("lastSessionRenewError", e.kind.name)
+            if (e.kind == CainiaoServiceException.Kind.LOGIN_EXPIRED) session.put("memberNeedsLogin", true)
+            CainiaoSessionStore.save(ctx, session)
+            throw e
+        }
+    }
+
+    private fun authenticated(ctx: Context, session: JSONObject, api: String, data: JSONObject): Pair<JSONObject, H5Mtop> =
+        CainiaoSessionAccess.read(
+            request = {
+                val http = H5Mtop(session.getString("cookie"))
+                http.call(api, data) to http
+            },
+            renew = { renewMember(ctx, session, force = true) }
+        )
+
+    suspend fun queryParcel(ctx: Context, mailNo: String, includePickup: Boolean = true): JSONObject = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val session = CainiaoSessionStore.read(ctx) ?: throw CainiaoServiceException(CainiaoServiceException.Kind.NO_SESSION)
+            val renewed = renewMember(ctx, session)
+            fun call(api: String, data: JSONObject) = CainiaoMemberRenewal.call(ctx, api, data,
+                session.getJSONObject("member"), session.getJSONObject("native"))
+            fun request(): JSONObject {
+                val response = call("mtop.cainiao.lde.detail.orderCode.mailNo.resCode.get.cn", JSONObject().put("mailNo", mailNo))
+                val initial = CainiaoPickup.parse(response, mailNo)
+                if (!includePickup || initial.code.isNotBlank() || initial.status in setOf("completed", "abnormal", "mismatch")) return response
+                val station = initial.stationId
+                if (station.isNotBlank()) {
+                    try {
+                        val auth = call("mtop.cainiao.nbpickup.pickupcode.queryauth.cn", JSONObject().put("stationId", station))
+                        response.put("pickupAuth", auth)
+                        val state = auth.optJSONObject("data")
+                        if (state?.optBoolean("identityCodeCertificated") == true && state.optBoolean("authToGetPickupCode")) {
+                            response.put("pickupResult", call("mtop.cainiao.nbpickup.pickupcode.genericverify.cn",
+                                JSONObject().put("stationId", station).put("queryContent", mailNo)))
+                        }
+                    } catch (e: CainiaoServiceException) {
+                        if (e.kind == CainiaoServiceException.Kind.LOGIN_EXPIRED) throw e
+                        // A pickup lookup can fail after the waybill's logistics data has arrived.
+                    }
+                }
+                return response
+            }
+            try {
+                try { request() } catch (e: CainiaoServiceException) {
+                    if (e.kind != CainiaoServiceException.Kind.LOGIN_EXPIRED || renewed || !renewMember(ctx, session, true)) throw e
+                    request()
+                }
+            } catch (e: CainiaoServiceException) {
+                if (e.kind == CainiaoServiceException.Kind.LOGIN_EXPIRED) {
+                    session.put("lastSessionRenewError", e.kind.name)
+                    CainiaoSessionStore.save(ctx, session)
+                }
+                throw e
+            }
+        }
+    }
+
+    suspend fun importConfiguration(ctx: Context, raw: String): String = withContext(Dispatchers.IO) {
+        mutex.withLock { PhoneProvisioning.import(ctx, raw) }
+    }
+
+    internal suspend fun acceptCapturedLogin(ctx: Context, candidate: CainiaoLoginLog.Candidate) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val existing = if (candidate.hasCapturedMember) null else CainiaoSessionStore.read(ctx)
+            val member = if (candidate.hasCapturedMember) candidate.member else {
+                val current = checkNotNull(existing?.optJSONObject("member"))
+                check(current.optString("cnAccountId") == candidate.member.optString("cnAccountId"))
+                current
+            }
+            val device = existing?.optJSONObject("native") ?: candidate.device
+            CainiaoMember.validate(member)
+            check(CainiaoMember.canRenew(member))
+            CainiaoMember.validateNative(device)
+            val http = H5Mtop(candidate.cookie)
+            val online = CainiaoIdentity.parseOnline(http.call("mtop.cainiao.nbpickup.identitycode.get.cn",
+                JSONObject().put("appName", "GUOGUO").put("verifyVersion", "V2")).getJSONObject("model"))
+            val type = online.value.last().toString()
+            val material = http.call("mtop.cainiao.nbpickup.native.identitycode.get.cn",
+                JSONObject().put("channel", "GUOGUO").put("codeType", type).put("verifyVersion", "V2"))
+                .getJSONObject("model").put("codeType", type)
+            check(CainiaoIdentity.parse(material).expiresAtMs > System.currentTimeMillis())
+            val now = System.currentTimeMillis()
+            val session = JSONObject().put("cookie", http.cookieHeader).put("member", member).put("native", device)
+                .put("material", material).put("online", JSONObject().put("code", online.value).put("expiresAtMs", online.expiresAtMs))
+                .put("lastOnlineRefreshedAtMs", now).put("lastRefreshedAtMs", now).put("lastRefreshAttemptAtMs", now)
+            currentCoroutineContext().ensureActive()
+            CainiaoSessionStore.save(ctx, session)
+        }
+    }
+
+    suspend fun renewSession(ctx: Context): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val session = CainiaoSessionStore.read(ctx) ?: throw CainiaoServiceException(CainiaoServiceException.Kind.NO_SESSION)
+            try {
+                if (!renewMember(ctx, session, force = true))
+                    throw CainiaoServiceException(CainiaoServiceException.Kind.AUTO_RENEW_NOT_CONFIGURED)
+                true
+            } catch (e: CainiaoServiceException) { recordFailure(ctx, session, e) }
+            catch (_: Exception) { recordFailure(ctx, session, CainiaoServiceException(CainiaoServiceException.Kind.INVALID_RESPONSE)) }
+        }
+    }
+
     suspend fun online(ctx: Context, force: Boolean = false): CainiaoIdentity.OnlineCode = withContext(Dispatchers.IO) {
         mutex.withLock {
             val session = CainiaoSessionStore.read(ctx) ?: throw CainiaoServiceException(CainiaoServiceException.Kind.NO_SESSION)
             val cached = snapshot(ctx).online
             if (!force && cached != null && cached.expiresAtMs > System.currentTimeMillis() + 3000) return@withLock cached
             try {
-                val http = H5Mtop(session.getString("cookie"))
-                val data = http.call("mtop.cainiao.nbpickup.identitycode.get.cn", JSONObject()
+                val (data, http) = authenticated(ctx, session, "mtop.cainiao.nbpickup.identitycode.get.cn", JSONObject()
                     .put("appName", "GUOGUO").put("verifyVersion", "V2"))
                 val fresh = CainiaoIdentity.parseOnline(data.getJSONObject("model"))
                 session.put("online", JSONObject().put("code", fresh.value).put("expiresAtMs", fresh.expiresAtMs))
@@ -62,11 +191,19 @@ object CainiaoRenewal {
     suspend fun refresh(ctx: Context, force: Boolean = false): CainiaoIdentity.Material? = withContext(Dispatchers.IO) {
         mutex.withLock {
             val session = CainiaoSessionStore.read(ctx) ?: return@withLock null
-            val old = CainiaoIdentity.parse(session.getJSONObject("material"))
-            if (!force && old.expiresAtMs - System.currentTimeMillis() > DAY_MS) return@withLock old
             try {
-                val http = H5Mtop(session.getString("cookie"))
-                val data = http.call("mtop.cainiao.nbpickup.native.identitycode.get.cn", JSONObject()
+                // Member lifetime is independent of the 15-day material cache.
+                if (!force) {
+                    // Proactive renewal is useful, but lack of its native runtime must not block a valid H5 cookie/material.
+                    try { renewMember(ctx, session) }
+                    catch (e: CainiaoServiceException) {
+                        session.put("lastSessionRenewError", e.kind.name)
+                        CainiaoSessionStore.save(ctx, session)
+                    }
+                }
+                val old = CainiaoIdentity.parse(session.getJSONObject("material"))
+                if (!force && old.expiresAtMs - System.currentTimeMillis() > DAY_MS) return@withLock old
+                val (data, http) = authenticated(ctx, session, "mtop.cainiao.nbpickup.native.identitycode.get.cn", JSONObject()
                     .put("channel", "GUOGUO").put("codeType", old.codeType.toString()).put("verifyVersion", "V2"))
                 val model = data.getJSONObject("model").put("codeType", old.codeType.toString())
                 val fresh = CainiaoIdentity.parse(model)

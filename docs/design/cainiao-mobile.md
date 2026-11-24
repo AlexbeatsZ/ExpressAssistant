@@ -6,6 +6,7 @@
 
 ## 会话边界
 
+- 0.9.16新增独立淘宝身份码：官方getIdentityMessage、XNS码和淘宝会话，细节见taobao-identity.md；原菜鸟CS8身份码与该链路不混用。
 - 身份码使用用户明确授权取得的菜鸟 App Cookie，H5 `native.identitycode.get.cn` 可续期；不需要重放原生 x-sign。
 - 菜鸟「我的包裹」使用淘宝 H5 会话和不带 `.cn` 的列表 API。实测上述菜鸟 App Cookie 不能直接用于列表，不能混用。
 - 服务器旧淘宝身份码接口的五个 false 只表示该请求上下文未下发码，不证明本人未实名或未授权。
@@ -36,7 +37,7 @@
 
 - 自有 fork 使用项目私有签名（.signing/，Git 排除），保留该密钥以便后续覆盖升级。上游签名与本 fork 不通用。
 - 初始化包可包含现有账号 Cookie、快递与商品缓存。由本机鉴权 API 或显式选择文件导入；导入前完整解析验证；导入后清除临时明文副本。
-- 服务器继续使用现有 Mac 18765 服务及 data，不迁移或部署到 ROG。API 说明见 server/AI_API.md。
+- 正式服务器已迁至ROG18769，与手机18768独立；API说明见server/AI_API.md。
 
 ## v0.9.3 刷新与失效（2026-11-06）
 
@@ -52,3 +53,24 @@
 用户授权临时安装官方菜鸟并本人完成登录后，已验证同一账号并只更新cainiao会话：两个手机刷新端点均200，source=online、needsLogin=false，材料期限延至11月21日；202件与三个平台账号保留。实际按钮刷新变码，CODE128解码与屏幕文字一致，在线码反解账号也与旧材料一致。本轮未修改APK，沿用已发布0.9.3/17。
 
 会员登录返回的sessionId约1天、refreshToken约30天，和离线材料15天期限独立。完整会员对象仅留在私有研究目录；正式程序尚未实现会员续登，现有H5通道拒绝customer.autologin。恢复本次登录不能当成长久免登录已实现。官方菜鸟临时保留供后续原生续登研究，不承担主App展示功能；临时日志采集已停止，原始日志/截图/实际码观察清理。
+
+## v0.9.6 会员自动续登（2026-11-07）
+
+- Cookie失效的恢复入口为原生会员autologin，按官方消费者路由与SDK字段发送；H5仍用于身份码/材料读取。具体协议与运行时依赖见cainiao-login.md。
+- 会员对象和原设备上下文由已有鉴权setup补充，仍使用同一加密文件；Cookie/材料旧导入兼容。会员有效期检查不受15天材料缓存短路，每12小时检查，临近到期主动续登，在线失效时在同一锁内恢复一次。
+- 新POST /api/session/refresh用于明确触发会员续登；状态只增加配置状态和期限，不返回会员ID、Token、Cookie、原设备标识。setup与续登共用互斥锁；先保存新会员凭证，再处理Cookie与后续请求。
+- 需保留已安装且证书匹配的官方菜鸟作为本地签名运行时，正式App不会启动其Activity/进程，也不依赖ADB。第一次消费者短信登录仍未接入；不得将会员续登写成独立首次登录完成。
+- K70真实旧Cookie失效→App内原生续登→online200→材料200与冷启动后续登均通过；官方菜鸟进程关闭、临时探针已删除，203件/三平台账号保持。37单测、lint零错误、签名release通过。身份实屏有条码及倒计时，无登录失效提示；站点扫码和跨30天运行未验收。
+
+## 拼多多运单自动查菜鸟取件码（v0.9.7）
+
+- PDD 订单列表的本地键不是运单号。先从 `goods_express` 的 `rawData.store.traceData.shipping.trackingNumber` 取得真实运单，保存到 trackingNumber；不改本地键与商品关联。
+- 淘宝 H5 queryalltrace 能读这件的待取件轨迹，但不返回隐私保护取件码。现有菜鸟会员原生会话可调 `mtop.cainiao.lde.detail.orderCode.mailNo.resCode.get.cn`，参数 mailNo；响应 `data.globalData` 给 mailNo/stationId，`uiProtocolData` 给取件码栏。屏蔽码 **** 不能显示为取件码。
+- 取码流程复用官方已存在路径：queryauth.cn(stationId)，仅 identityCodeCertificated 与 authToGetPickupCode 均 true 时，调用 genericverify.cn(stationId, queryContent=真实运单号)。只接受 verifyResult=true 且 packageDTOList 中 mailNo/stationId 精确匹配的 pickupCode。不会自行签协议、实名、发送短信或跳过验证。
+- 原生请求共用已安装的官方签名运行时与加密会员状态，在续登互斥锁内处理过期恢复。包裹查询失败不污染身份码错误状态。
+- 仅待取件且尚无码的记录查询；成功码保留，失败至少间隔1小时，避免每次刷新消耗取码次数。下次列表同步匹配 trackingNumber；终态清除凭据。无法自动取得时详情明确显示需本人授权/验证或暂不可用，PDD 顶部末五位作为备用提示。
+- K70 本人留样完成真实闭环：PDD 自动抓真实运单→菜鸟详情返回隐私保护→既有授权 true/true→genericverify 返回该件真正驿站码。临时响应仅用于确认协议，正式构建移除文件输出。
+
+## v0.9.9 有效 H5 会话优先
+
+身份码在线读取和强制材料刷新先直接使用已有Cookie，仅收到明确会话过期时调用原生会员续登并重试一次；不再因为原生运行时不可用而提前阻断仍有效的H5接口。后台提前续登仍保留，失败不阻断有效离线材料。原生包裹查询和续登仍有官方运行时依赖，裁剪实验未通过。

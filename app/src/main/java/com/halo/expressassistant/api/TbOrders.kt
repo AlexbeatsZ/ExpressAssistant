@@ -145,11 +145,12 @@ object TbOrders {
         check(json.isNotBlank()) { "淘宝订单响应无法解析" }
         val root = JSONObject(json)
         val ret = root.optJSONArray("ret")
-        if (ret != null && (0 until ret.length()).none { ret.optString(it).startsWith("SUCCESS") }) {
-            error(if (ret.toString().contains("SESSION_EXPIRED") || ret.toString().contains("FAIL_SYS_TOKEN"))
+        check(ret != null && ret.length() > 0) { "淘宝订单响应无法确认登录状态" }
+        if ( (0 until ret.length()).none { ret.optString(it).startsWith("SUCCESS") }) {
+            error(if (ret.toString().contains("SESSION_EXPIRED"))
                 "淘宝登录已失效，请在设置中重新登录" else "淘宝订单读取失败，请在设置中检查登录状态")
         }
-        val data = root.optJSONObject("data") ?: return emptyList()
+        val data = root.optJSONObject("data") ?: error("淘宝订单响应缺少数据")
         // 新格式：data.result 是字符串，内层 JSON 有 mainOrders；旧格式：data.data.Main_*
         val inner: JSONObject? = runCatching {
             JSONObject(data.optString("result"))

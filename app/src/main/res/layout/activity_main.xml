@@ -9,10 +9,10 @@
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
-        android:layout_height="?attr/actionBarSize"
+        android:layout_height="80dp"
         android:background="?attr/surfaceBackground">
         <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center_vertical">
-            <TextView android:id="@+id/toolbar_title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="快递" android:textAppearance="?attr/textAppearanceTitleLarge" android:textColor="?attr/colorOnSurface" />
+            <TextView android:id="@+id/toolbar_title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="快递" android:textSize="32sp" android:textColor="?attr/colorOnSurface" />
             <ImageButton android:id="@+id/btn_calendar" android:layout_width="44dp" android:layout_height="48dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="日历" android:src="@drawable/ic_calendar" app:tint="?attr/colorOnSurface" />
             <ImageButton
                 android:id="@+id/btn_done"
@@ -36,11 +36,12 @@
                 style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginHorizontal="16dp" android:layout_marginTop="8dp" android:layout_marginBottom="12dp"
-                android:hint="搜索商品或输入运单号"
+                android:hint="搜索商品 / 粘贴运单号添加"
                 app:boxCornerRadiusTopStart="24dp" app:boxCornerRadiusTopEnd="24dp" app:boxCornerRadiusBottomStart="24dp" app:boxCornerRadiusBottomEnd="24dp"
                 app:startIconDrawable="@drawable/ic_search" app:endIconMode="clear_text">
                 <com.google.android.material.textfield.TextInputEditText android:id="@+id/search_input" android:layout_width="match_parent" android:layout_height="wrap_content" android:singleLine="true" android:inputType="text" android:imeOptions="actionSearch" />
             </com.google.android.material.textfield.TextInputLayout>
+            <include android:id="@+id/login_warning_panel" layout="@layout/view_login_warning" />
             <LinearLayout android:id="@+id/pending_package" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginHorizontal="20dp" android:layout_marginBottom="8dp" android:gravity="center_vertical" android:visibility="gone">
                 <TextView android:id="@+id/pending_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:textColor="?attr/colorOnSurface" android:textSize="14sp" />
                 <com.google.android.material.button.MaterialButton android:id="@+id/btn_add_package" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="添加" />

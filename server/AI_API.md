@@ -18,7 +18,7 @@
 Authorization: Bearer YOUR_TOKEN
 ```
 
-本机令牌保存在 `/Users/meta/Project/Workspaces/ExpressAssistant/server/data/config.json` 的 `token` 字段。本次交付还附有私有文件 `express-api.env`，含已填写的地址与令牌，可与本文一起提供给获授权的 AI 执行环境。不要把它提交到 Git 或公开文档。本文没有令牌明文。
+本机令牌保存在 `/Users/meta/Developer/ExpressAssistant/server/data/config.json` 的 `token` 字段。本次交付还附有私有文件 `express-api.env`，含已填写的地址与令牌，可与本文一起提供给获授权的 AI 执行环境。不要把它提交到 Git 或公开文档。本文没有令牌明文。
 
 在 shell 中加载配置（把路径改为私有文件所在位置）：
 
@@ -258,6 +258,7 @@ curl --fail-with-body -sS -H "Authorization: Bearer $EXPRESS_PHONE_API_TOKEN" \
 | GET | `/api/sync` | 手机同步 running、finishedAt、statuses、total；逐项检查 error |
 | POST | `/api/identity/refresh` | 使用本人菜鸟会话更新离线材料；返回状态元数据 |
 | POST | `/api/identity/online/refresh` | 请求在线身份码并加密缓存；仅返回状态元数据 |
+| POST | `/api/session/refresh` | 使用已配置会员refreshToken续登，保存轮换凭证和Cookie；仅返回状态元数据 |
 
 手机维护接口不导出身份码原文、密钥或 Cookie。身份码在手机界面显示条形码。POST setup 格式如下（只有结构示意，所有凭证要替换为本人真实材料）：
 
@@ -352,3 +353,43 @@ GET /api/status 的 identity 增加以下元数据，不含实际身份码：
 ### v0.9.4 详情页稳定性
 
 手机修复商品详情重复回写数据、onResume反复重建页面造成的闪烁。四类真实已发货/未发货/已完成详情已实机验证稳定，原有API路径和鉴权不变。手机状态接口version为0.9.4；快递、平台账号和菜鸟身份会话保留。
+
+### v0.9.6 手机会员自动续登
+
+长期使用需要会员续登凭证，Cookie和15天离线材料本身不能维持长期登录。已有手机会话可用`POST /api/setup`只补充以下内容；这里只展示结构，所有值均为占位符：
+
+```json
+{
+  "schema": 1,
+  "cainiaoMember": {
+    "sessionId": "本人会员会话",
+    "refreshToken": "本人续登凭证",
+    "cnAccountId": "1234567890",
+    "tenantId": 78,
+    "sessionIdExpired": "2000000000000",
+    "refreshTokenExpired": "2002505600000"
+  },
+  "cainiaoNative": {
+    "utdid": "本人原设备标识",
+    "ttid": "本人原客户端标识"
+  }
+}
+```
+
+此导入保留现有Cookie、身份材料、快递及其他平台账号。也可在完整`cainiao`对象内提供`member`和`native`。这些字段只写入加密存储，不通过状态API导出。仅有会员凭证且尚未初始化身份会话时应先完成原有初始化。
+
+客户端每12小时同时检查会员与材料；会员剩余不足13小时主动续登，身份码接口报告登录失效时先续登并仅重试一次。网络失败保留现有有效材料，明确拒绝后要求重新认证。`POST /api/session/refresh`可主动验证会员续登，自动流程无需AI/电脑触发。
+
+状态增加`autoRenewConfigured`、`canAutoRenew`、`sessionExpiresAtMs`、`refreshTokenExpiresAtMs`、`lastSessionRenewedAtMs`、`lastSessionRenewAttemptAtMs`。不返回账号ID、会员Token、Cookie、签名或设备标识。`CAINIAO_AUTO_RENEW_NOT_CONFIGURED`返回409；`CAINIAO_AUTH_RUNTIME_UNAVAILABLE`返回503并保留有效缓存。
+
+当前签名运行时来自手机已安装且证书匹配的官方菜鸟8.11.1023，需保留安装。快递助手使用自己的进程和存储，不启动官方App，不依赖ADB常连；发布包不附带官方SDK或任何本人凭证。独立手机号首次登录、跨30天持续运行和真实驿站扫码仍需单独验收，不能由一次续登成功推定永久免登录。
+
+### 手机取件凭据（Android 0.9.7）
+
+手机 `/api/express` 与 `/api/pickup` 增加 `pickupHint` 和 `trackingNumber`。`pickupCode` 仅表示平台实际返回的取件码；若拼多多返回「取件出示快递单号后五位」，完整说明在 `pickupHint`，不能将该末五位当作驿站码。PDD 的 `mailNo` 仍兼容既有本地订单键，真实运单号在 `trackingNumber`，`orderId` 不变。已取件清除取件凭据；到站后 ETA 为空。
+
+拼多多已知真实运单会自动查询本人菜鸟登录态，优先显示菜鸟实际返回的 `pickupCode`。`pickupCodeSource=cainiao` 表示菜鸟取码来源，`pickupQueryStatus` 表示最近查询结果（`ok`、`authorization_required`、`verification_required` 等），`pickupQueriedAt` 为毫秒时间戳；无码时的 `pickupHint` 仍仅是备用方式。此查询无需电脑或 ADB 常连。
+
+### 手机登录失效状态（Android 0.9.18）
+
+`GET /api/status` 增加 `expiredLoginChannels` 数组，例如 `["taobao", "pdd"]`。它只列出已启用账号中已经确认需要重新登录的平台（`xiaomi`、`jd`、`taobao`、`pdd`），以及已确认失效的独立 `cainiao` 会话。不含账号名称、ID、Cookie或其他凭据。空数组表示目前没有已确认的失效，不能据此断言每个平台都刚完成在线认证。网络错误不设置或清除已确认失效；重新登录或成功认证后对应提醒恢复。现有 `identity.needsLogin`、HTTP鉴权与其他字段保持兼容。

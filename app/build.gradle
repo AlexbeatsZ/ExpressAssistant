@@ -12,8 +12,8 @@ android {
         applicationId "com.halo.expressassistant"
         minSdk 26
         targetSdk 36
-        versionCode 18
-        versionName "0.9.4"
+        versionCode 32
+        versionName "0.9.18"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -50,9 +50,14 @@ android {
         viewBinding true
         aidl true
     }
+    // Reserve a separate resource package so the embedded runtime keeps its original IDs.
+    aaptOptions {
+        additionalParameters '--package-id', '0x7e', '--allow-reserved-package-id'
+    }
 }
 
 dependencies {
+    compileOnly 'de.robv.android.xposed:api:82'
     implementation 'androidx.core:core-ktx:1.13.1'
     implementation 'androidx.webkit:webkit:1.9.0'
     implementation 'androidx.appcompat:appcompat:1.7.0'

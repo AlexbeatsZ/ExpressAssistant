@@ -20,7 +20,6 @@ import com.halo.expressassistant.data.sectionKeyOf
 import com.halo.expressassistant.ui.DetailActivity
 import com.halo.expressassistant.ui.MainActivity
 import com.halo.expressassistant.ui.SyncEngine
-import com.halo.expressassistant.ui.Themes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -154,11 +153,10 @@ class ExpressWidgetProvider : AppWidgetProvider() {
             val large = width >= 300 && height >= 250
             val medium = width >= 300
 
-            val lark = Store.theme(context) == Themes.LARK || Store.colorScheme(context) == "warm"
             val allItems = Store.items(context)
             val items = allItems.filter {
                 when (sectionKeyOf(it)) {
-                    "delivering" -> Store.widgetShowDelivering(context)
+                    "pickup", "delivering" -> Store.widgetShowDelivering(context)
                     "shipped" -> Store.widgetShowShipped(context)
                     "notshipped" -> Store.widgetShowNotShipped(context)
                     else -> false
@@ -181,19 +179,13 @@ class ExpressWidgetProvider : AppWidgetProvider() {
                 val showTime = rowDp >= ROW_DP_MIN_3LINE
                 val views = RemoteViews(
                     context.packageName,
-                    when {
-                        compact && lark -> R.layout.widget_express_list_lark_compact
-                        compact -> R.layout.widget_express_list_compact
-                        lark -> R.layout.widget_express_list_lark
-                        else -> R.layout.widget_express_list
-                    }
+                    if (compact) R.layout.widget_express_list_compact else R.layout.widget_express_list
                 )
                 Log.d(
                     "WidgetDebug",
                     "RENDER id=$id large=$large all=${allItems.size} items=${items.size} " +
                         "grid=${gridCols}x${gridRows} cap=$cap rowDp=$rowDp " +
-                        "compact=$compact showTime=$showTime " +
-                        "themes=${Store.theme(context)}/${Store.colorScheme(context)}"
+                        "compact=$compact showTime=$showTime"
                 )
                 // 可见性必须"显式发全套"（VISIBLE/GONE 都发）：桌面 updateAppWidget 命中同一 layout 时走
                 // reapply（复用旧视图树），只发 VISIBLE 不发 GONE 会残留上一次的格子——件数变少时
@@ -242,7 +234,7 @@ class ExpressWidgetProvider : AppWidgetProvider() {
             } else {
                 val views = RemoteViews(
                     context.packageName,
-                    if (lark) R.layout.widget_express_small_lark else R.layout.widget_express_small
+                    R.layout.widget_express_small
                 )
                 val counts = countsOf(items)
                 views.setTextViewText(R.id.widget_small_summary, smallSummary(items, counts))
@@ -356,17 +348,13 @@ class ExpressWidgetProvider : AppWidgetProvider() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-        /**
-         * 时间行文案。优先 ETA（取"X月X日"），否则用轨迹时间的 MM-dd。
-         * **统一去掉"预计"前缀**：最窄档（8 列列宽仅约 43dp）"预计今天送达"会被横向省略成
-         * "预计今…"，而"今天送达"任何档位都放得下；宽松档也一并去掉，保持各件数文案一致。
-         */
+        /** 预计时间保留明确前缀；到站后显示实际轨迹日期。 */
         private fun timeOf(item: ExpressItem): String {
-            val eta = item.eta
+            val eta = item.etaLabel()
             if (eta.isNotBlank()) {
                 val hit = Regex("(\\d{1,2}月\\d{1,2}日)").find(eta)?.groupValues?.get(1)
-                if (hit != null) return hit
-                return etaBody(eta).take(7)
+                if (hit != null) return "预计$hit"
+                return eta.take(9)
             }
             val t = item.latestTime.trim()
             if (t.isBlank()) return ""
@@ -385,7 +373,7 @@ class ExpressWidgetProvider : AppWidgetProvider() {
             for (item in items) {
                 when (sectionKeyOf(item)) {
                     "delivering" -> { delivering++; transit++ }
-                    "shipped", "notshipped" -> transit++
+                    "pickup", "shipped", "notshipped" -> transit++
                     "abnormal" -> abnormal++
                     "done" -> done++
                 }
@@ -408,19 +396,20 @@ class ExpressWidgetProvider : AppWidgetProvider() {
 
         private fun smallDetail(items: List<ExpressItem>): String {
             val inTransit = items.sortedBy { orderOf(it) }.firstOrNull {
-                sectionKeyOf(it) in setOf("delivering", "shipped", "notshipped")
+                sectionKeyOf(it) in setOf("pickup", "delivering", "shipped", "notshipped")
             }
-            if (inTransit == null) return "点击打开快递助手"
-            val eta = etaBody(inTransit.eta)
+            if (inTransit == null) return "点击打开快递"
+            val eta = etaBody(inTransit.etaLabel())
             return if (eta.isNotBlank()) {
                 // eta 本身多半自带"预计"，这里去前缀再拼，避免"预计 预计今天送达"
                 "${inTransit.companyName} · 预计 $eta"
             } else {
-                "${inTransit.companyName} · ${inTransit.latestText.ifBlank { inTransit.stateLabel() }}"
+                "${inTransit.companyName} · ${inTransit.pickupLabel().ifBlank { inTransit.stateLabel() }}"
             }
         }
 
         private fun orderOf(item: ExpressItem): Int = when (sectionKeyOf(item)) {
+            "pickup" -> -1
             "delivering" -> 0
             "shipped" -> 1
             "notshipped" -> 2

@@ -49,6 +49,10 @@ object PddTraceBackfill {
                 // 先回填历史缓存 → 卡片轨迹外显（列表只存了状态提示，真实轨迹在缓存里）
                 items.forEach { PddTraceFetcher.applyCachedTraceToItem(act, it) }
                 refreshList()
+                // Known waybills can obtain the Cainiao code without reopening PDD's WebView.
+                items.filter { it.trackingNumber.isNotBlank() && it.pickupCode.isBlank() && it.isAwaitingPickup() }
+                    .take(MAX_PER_RUN).forEach { PddTraceFetcher.refreshCainiaoPickup(act, it.mailNo) }
+                refreshList()
                 val need = items.filter {
                     Store.pddTraceNeedsRefresh(act, it.mailNo, done = it.state == 3)
                 }.sortedWith(
@@ -75,7 +79,6 @@ object PddTraceBackfill {
                     try {
                         val points = PddTraceFetcher.fetchWith(act, item, cookies, silent = true)
                         if (points != null && points.isNotEmpty()) {
-                            PddTraceFetcher.applyTraceToItem(act, item, points, done = item.state == 3)
                             ok++
                         } else {
                             fail++

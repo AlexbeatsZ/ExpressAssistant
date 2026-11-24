@@ -37,10 +37,13 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import com.halo.expressassistant.TrackingNotifier
 import com.halo.expressassistant.api.KuaiDi100
+import com.halo.expressassistant.api.ManualPackages
 import com.halo.expressassistant.api.XiaomiApi
 import com.halo.expressassistant.api.XiaomiSync
 import com.halo.expressassistant.data.ExpressDetail
 import com.halo.expressassistant.data.ExpressItem
+import com.halo.expressassistant.data.AccountLoginStore
+import com.halo.expressassistant.data.CainiaoSessionStore
 import com.halo.expressassistant.data.Store
 import com.halo.expressassistant.data.displayProgress
 import com.halo.expressassistant.data.sectionKeyOf
@@ -64,7 +67,6 @@ import kotlin.math.max
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var adapter: ExpressAdapter
-    private var appliedTheme: String = ""
 
 
     private lateinit var identityPanel: IdentityPanel
@@ -73,22 +75,26 @@ class MainActivity : AppCompatActivity() {
     private var recognitionJob: kotlinx.coroutines.Job? = null
     private var pendingMailNo = ""
     private var pendingCompany: KuaiDi100.Company? = null
+    private val storeChanges = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "items") runOnUiThread { reload() }
+        if (key == AccountLoginStore.CHANGE_KEY || key?.endsWith("_accounts") == true) runOnUiThread { refreshLoginWarning() }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         Themes.apply(this)
-        appliedTheme = Themes.current(this)
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         EdgeToEdge.apply(this, binding.root)
-        Paper.apply(this, binding.root, binding.toolbar)
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3001)
+        val permissions = com.halo.expressassistant.PackageAutoImport.initialPermissions(this).toMutableList()
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) permissions += Manifest.permission.POST_NOTIFICATIONS
+        if (permissions.isNotEmpty()) requestPermissions(permissions.toTypedArray(), 3001)
         adapter = ExpressAdapter(onClick = { openDetail(it) }, onLongClick = { showPackageSheet(it) })
         binding.list.layoutManager = LinearLayoutManager(this)
         binding.list.adapter = adapter
         binding.swipeRefresh.setOnChildScrollUpCallback { _, _ -> binding.list.canScrollVertically(-1) }
         binding.swipeRefresh.setOnRefreshListener {
-            if (Store.hasAnyAccount(this)) syncAll()
+            if (Store.hasAnyAccount(this) || Store.items(this).any { it.source == "manual" }) syncAll()
             else { binding.swipeRefresh.isRefreshing = false; Toast.makeText(this, "请先登录账号", Toast.LENGTH_SHORT).show() }
         }
         identityPanel = IdentityPanel(this)
@@ -97,6 +103,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnDone.setOnClickListener { startActivity(Intent(this, DonePanelActivity::class.java)) }
         binding.btnCalendar.setOnClickListener { showCalendarSheet() }
         binding.btnSettings.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+        binding.loginWarningPanel.btnLoginWarning.setOnClickListener { showExpiredAccounts() }
         binding.searchInput.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -177,16 +184,26 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (appliedTheme != Themes.current(this)) { recreate(); return }
+        getSharedPreferences("express_store", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(storeChanges)
         reload()
+        refreshLoginWarning()
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { AccountLoginStore.cainiao(this@MainActivity, CainiaoSessionStore.read(this@MainActivity)) }
+        }
         if (selectedTab == com.halo.expressassistant.R.id.nav_identity) identityPanel.show()
         com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(this)
         if (!maybeAutoSync() && !SyncEngine.isRunning) PddTraceBackfill.backfill(this, lifecycleScope)
     }
 
     override fun onPause() {
+        getSharedPreferences("express_store", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(storeChanges)
         identityPanel.hide()
         super.onPause()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 3001) com.halo.expressassistant.PackageAutoImport.scanSms(this)
     }
 
     /** 首页显示在途；搜索包含历史，工具栏可打开完成/异常列表。 */
@@ -194,14 +211,34 @@ class MainActivity : AppCompatActivity() {
         val all = Store.items(this)
         val goods = Store.jdGoods(this)
         val q = searchQuery.lowercase()
+        val waybill = ManualPackages.normalise(q)
         val rows = if (q.isBlank()) all else all.filter { item ->
-            listOf(item.mailNo, item.companyName, item.latestText, item.pickupCode, goods[item.mailNo]?.name.orEmpty()).any { it.lowercase().contains(q) }
+            ManualPackages.matches(item, waybill) ||
+                listOf(item.mailNo, item.companyName, item.latestText, item.pickupCode, item.pickupHint, item.trackingNumber, goods[item.mailNo]?.name.orEmpty()).any { it.lowercase().contains(q) }
         }
         adapter.setSearchMode(q.isNotBlank()); adapter.submit(rows)
         val empty = if (q.isNotBlank()) rows.isEmpty() else rows.none { isTransportItem(it) }
         binding.emptyState.visibility = if (empty) View.VISIBLE else View.GONE
         binding.emptyState.text = if (q.isNotBlank()) "没有找到快递" else "没有在途快递"
         if (selectedTab == com.halo.expressassistant.R.id.nav_identity) identityPanel.reloadFromStore()
+    }
+
+    private fun refreshLoginWarning() {
+        val channels = AccountLoginStore.expiredChannels(this)
+        binding.loginWarningPanel.root.visibility = if (channels.isEmpty()) View.GONE else View.VISIBLE
+        binding.loginWarningPanel.loginWarningSummary.text = channels.joinToString("、") { AccountLoginStore.name(it) } + "暂时无法同步"
+    }
+
+    private fun showExpiredAccounts() {
+        val channels = AccountLoginStore.expiredChannels(this)
+        fun open(channel: String) {
+            startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_LOGIN_CHANNEL, channel))
+        }
+        if (channels.size == 1) open(channels.first())
+        else if (channels.isNotEmpty()) MaterialAlertDialogBuilder(this)
+            .setTitle("需要重新登录")
+            .setItems(channels.map { AccountLoginStore.name(it) }.toTypedArray()) { _, index -> open(channels[index]) }
+            .setNegativeButton("取消", null).show()
     }
 
     /** 在途判定（与适配器 bucket 一致）：0/1/2/5 归在途，3 完成、4/108-111 异常 */
@@ -219,7 +256,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun arrivalDateOf(item: ExpressItem): Pair<Int, Int>? {
-        val eta = item.eta
+        val eta = item.etaLabel()
         if (eta.isBlank()) return null
         val m = Regex("(\\d{1,2})月(\\d{1,2})日").find(eta) ?: return null
         return m.groupValues[1].toInt() to m.groupValues[2].toInt()
@@ -645,10 +682,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun recogniseInput(raw: String) {
         recognitionJob?.cancel()
-        val mail = com.halo.expressassistant.api.ManualPackages.normalise(raw)
+        val mail = ManualPackages.normalise(raw)
         pendingMailNo = ""; pendingCompany = null
-        val exists = Store.items(this).any { it.mailNo.equals(mail, true) }
-        if (!com.halo.expressassistant.api.ManualPackages.isWaybill(mail) || exists) {
+        val exists = Store.items(this).any { ManualPackages.matches(it, mail) }
+        if (!ManualPackages.isWaybill(mail) || exists) {
             binding.pendingPackage.visibility = View.GONE
             return
         }
@@ -657,7 +694,7 @@ class MainActivity : AppCompatActivity() {
         recognitionJob = lifecycleScope.launch {
             kotlinx.coroutines.delay(500)
             val company = detectCompany(mail)
-            if (com.halo.expressassistant.api.ManualPackages.normalise(searchQuery) != mail) return@launch
+            if (ManualPackages.normalise(searchQuery) != mail) return@launch
             pendingMailNo = mail; pendingCompany = company
             binding.pendingLabel.text = "${company?.name?.ifBlank { "快递" } ?: "快递公司待识别"} · $mail"
         }
@@ -674,34 +711,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun submitSearch() {
-        val mail = com.halo.expressassistant.api.ManualPackages.normalise(searchQuery)
-        val existing = Store.items(this).firstOrNull { it.mailNo.equals(mail, true) }
+        val mail = ManualPackages.normalise(searchQuery)
+        val existing = Store.items(this).firstOrNull { ManualPackages.matches(it, mail) }
         if (existing != null) openDetail(existing)
-        else if (com.halo.expressassistant.api.ManualPackages.isWaybill(mail)) addFromSearch()
+        else if (ManualPackages.isWaybill(mail)) addFromSearch()
         (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(binding.searchInput.windowToken, 0)
     }
 
     private fun addFromSearch() {
-        val mail = com.halo.expressassistant.api.ManualPackages.normalise(searchQuery)
-        if (!com.halo.expressassistant.api.ManualPackages.isWaybill(mail)) return
-        if (Store.items(this).any { it.mailNo.equals(mail, true) }) { reload(); return }
-        recognitionJob?.cancel(); binding.btnAddPackage.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                val company = if (pendingMailNo == mail && pendingCompany != null) pendingCompany else detectCompany(mail)
-                if (Store.items(this@MainActivity).none { it.mailNo.equals(mail, true) }) {
-                    val item = ExpressItem(id = mail, mailNo = mail, companyCode = company?.comCode.orEmpty(),
-                        companyName = company?.name?.ifBlank { "快递" } ?: "快递", source = "manual", state = -1,
-                        stateNum = 0, stateName = "待查询", originalName = company?.name.orEmpty())
-                    Store.saveItems(this@MainActivity, Store.items(this@MainActivity) + item)
-                    Store.restoreHidden(this@MainActivity, mail)
-                    binding.searchInput.setText(""); reload()
-                    Toast.makeText(this@MainActivity, "已添加", Toast.LENGTH_SHORT).show()
-                    withContext(Dispatchers.IO) { runCatching { com.halo.expressassistant.api.ManualPackages.refresh(this@MainActivity, item) } }
-                    reload()
-                }
-            } finally { binding.btnAddPackage.isEnabled = true }
+        val mail = ManualPackages.normalise(searchQuery)
+        if (!ManualPackages.isWaybill(mail)) {
+            Toast.makeText(this, "运单号需为12～17位字母、数字或短横线，至少6位数字且最多6位非数字", Toast.LENGTH_LONG).show()
+            return
         }
+        recognitionJob?.cancel()
+        val item = ManualPackages.add(this, mail, pendingCompany.takeIf { pendingMailNo == mail })
+        binding.pendingPackage.visibility = View.GONE
+        binding.searchInput.setText(mail)
+        binding.searchInput.clearFocus()
+        (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+            .hideSoftInputFromWindow(binding.searchInput.windowToken, 0)
+        reload()
+        if (item.source != "manual") return
+        Toast.makeText(this, "已添加到快递列表", Toast.LENGTH_SHORT).show()
+        com.halo.expressassistant.PackageAutoImport.enqueueLookup(this, item.mailNo)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -795,10 +828,10 @@ class MainActivity : AppCompatActivity() {
                 setTrackColor(MaterialColors.getColor(this@MainActivity, android.R.attr.colorControlNormal, 0))
             }
             content.addView(progressBar)
-            val eta = item.eta
+            val eta = item.etaLabel()
             if (eta.isNotBlank()) {
                 val etaView = TextView(this).apply {
-                    text = "预计送达：$eta"
+                    text = eta
                     textSize = 13f
                     setTextColor(primary())
                     setPadding(0, dp(6), 0, 0)
@@ -1054,9 +1087,10 @@ class MainActivity : AppCompatActivity() {
             .setTitle("移除快递")
             .setMessage("将 ${item.companyName}（${item.mailNo}）移除？可在设置里的“删除快递”中恢复。")
             .setPositiveButton("移除") { _, _ ->
-                val all = Store.items(this)
-                Store.addHidden(this, item)
-                Store.saveItems(this, all.filterNot { it.mailNo == item.mailNo })
+                Store.updateItems(this) { all ->
+                    Store.addHidden(this, item)
+                    all.filterNot { it.mailNo == item.mailNo }
+                }
                 reload()
             }
             .setNegativeButton("取消", null)

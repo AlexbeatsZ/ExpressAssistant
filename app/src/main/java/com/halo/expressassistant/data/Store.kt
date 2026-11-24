@@ -28,17 +28,6 @@ object Store {
     private const val KEY_WIDGET_SHOW_DELIVERING = "widget_show_delivering"
     private const val KEY_WIDGET_SHOW_SHIPPED = "widget_show_shipped"
     private const val KEY_WIDGET_SHOW_NOTSHIPPED = "widget_show_notshipped"
-    private const val KEY_THEME = "theme"
-    private const val KEY_THEME_COLOR = "theme_color"
-    private const val KEY_THEME_FONT = "theme_font"
-    private const val KEY_THEME_COLOR_DAY = "theme_color_day"
-    private const val KEY_THEME_COLOR_NIGHT = "theme_color_night"
-    private const val KEY_THEME_FONT_DAY = "theme_font_day"
-    private const val KEY_THEME_FONT_NIGHT = "theme_font_night"
-    private const val KEY_PAPER_DAY = "paper_intensity_day"
-    private const val KEY_PAPER_NIGHT = "paper_intensity_night"
-    private const val KEY_CUSTOM_SEPARATE = "custom_separate"
-    private const val KEY_PAPER_INTENSITY = "paper_intensity"
     private const val KEY_JD_COOKIES = "jd_cookies"
     private const val KEY_JD_GOODS = "jd_goods"
     private const val KEY_TB_COOKIES = "tb_cookies"
@@ -69,7 +58,7 @@ object Store {
 
     val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    fun items(context: Context): List<ExpressItem> {
+    @Synchronized fun items(context: Context): List<ExpressItem> {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val raw = prefs.getString(KEY_LIST, null)
             ?: return seed().also { saveItems(context, it) }
@@ -84,12 +73,19 @@ object Store {
         }
     }
 
-    fun saveItems(context: Context, items: List<ExpressItem>) {
+    @Synchronized fun saveItems(context: Context, items: List<ExpressItem>) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit {
             putString(KEY_LIST, json.encodeToString(reconcileItems(prefs, items)))
         }
         com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(context)
+    }
+
+    @Synchronized fun updateItems(context: Context, update: (List<ExpressItem>) -> List<ExpressItem>): List<ExpressItem> {
+        val previous = items(context)
+        val next = update(previous)
+        if (next != previous) saveItems(context, next)
+        return next
     }
 
     fun seed(): List<ExpressItem> = emptyList()
@@ -220,22 +216,30 @@ object Store {
         return try { json.decodeFromString<List<BoundAccount>>(raw) } catch (e: Throwable) { emptyList() }
     }
 
-    fun saveAccounts(context: Context, channel: String, list: List<BoundAccount>) {
+    @Synchronized fun saveAccounts(context: Context, channel: String, list: List<BoundAccount>) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
             putString(accountKey(channel), json.encodeToString(list))
         }
     }
 
-    fun addAccount(context: Context, channel: String, account: BoundAccount) {
+    @Synchronized fun addAccount(context: Context, channel: String, account: BoundAccount) {
         saveAccounts(context, channel, accounts(context, channel).filterNot { it.id == account.id } + account)
+        AccountLoginStore.signedIn(context, channel, account.id)
     }
 
-    fun removeAccount(context: Context, channel: String, id: String) {
+    @Synchronized fun removeAccount(context: Context, channel: String, id: String) {
         saveAccounts(context, channel, accounts(context, channel).filterNot { it.id == id })
     }
 
-    fun updateAccount(context: Context, channel: String, account: BoundAccount) {
+    @Synchronized fun updateAccount(context: Context, channel: String, account: BoundAccount) {
         saveAccounts(context, channel, accounts(context, channel).map { if (it.id == account.id) account else it })
+    }
+
+    /** Cookie rotation must preserve current metadata and cannot replace a newer login. */
+    @Synchronized fun updateAccountPayload(context: Context, channel: String, requested: BoundAccount, payload: String): BoundAccount? {
+        val current = accountById(context, channel, requested.id)
+        if (!LoginStatus.accepts(current, requested)) return null
+        return current!!.copy(payload = payload).also { updateAccount(context, channel, it) }
     }
 
     fun firstEnabledAccount(context: Context, channel: String): BoundAccount? =
@@ -327,6 +331,9 @@ object Store {
     fun maskPhone(p: String): String =
         if (p.length >= 7) p.replaceRange(3, 7, "****") else p
 
+    private fun cookieValue(cookies: String, name: String): String = cookies.split(';')
+        .map { it.trim().split('=', limit = 2) }.firstOrNull { it.size == 2 && it[0] == name }?.get(1).orEmpty()
+
     fun jdLabelOf(cookies: String): String {
         val m = Regex("[;\\s]pt_pin=([^;]+)").find(cookies)?.groupValues?.get(1)
         return if (!m.isNullOrBlank()) java.net.URLDecoder.decode(m, "UTF-8").take(16) else "账号"
@@ -361,7 +368,7 @@ object Store {
 
     fun xiaomiPhones(context: Context): List<String> = xiaomiCred(context).phones
 
-    fun addXiaomiAccount(context: Context, cred: XiaomiCred) {
+    @Synchronized fun addXiaomiAccount(context: Context, cred: XiaomiCred) {
         // 同账号（userId 相同）重新登录 = 更新凭证，不新增重复账号
         val existing = if (cred.accountId.isNotBlank()) {
             accounts(context, CH_XIAOMI).firstOrNull {
@@ -373,6 +380,7 @@ object Store {
                 context, CH_XIAOMI,
                 existing.copy(payload = xiaomiPayload(cred))
             )
+            AccountLoginStore.signedIn(context, CH_XIAOMI, existing.id)
         } else {
             addAccount(
                 context, CH_XIAOMI,
@@ -417,12 +425,16 @@ object Store {
     fun jdCookies(context: Context): String =
         firstEnabledAccount(context, CH_JD)?.let { cookieOf(it.payload) } ?: ""
 
-    fun addJdAccount(context: Context, cookies: String) {
+    @Synchronized fun addJdAccount(context: Context, cookies: String) {
         // 去重：同账号（标签=pt_key/尾号）已存在 → 更新凭证而非重复新增（防“自动登录重复绑定”）
         val label = "京东账号 · ${jdLabelOf(cookies)}"
-        val exists = accounts(context, CH_JD).firstOrNull { it.label == label }
+        val exists = accounts(context, CH_JD).firstOrNull {
+            cookieValue(cookies, "pt_pin").isNotBlank() &&
+                cookieValue(cookieOf(it.payload), "pt_pin") == cookieValue(cookies, "pt_pin")
+        }
         if (exists != null) {
-            updateAccount(context, CH_JD, exists.copy(payload = cookiePayload(cookies), enabled = true))
+            updateAccount(context, CH_JD, exists.copy(payload = cookiePayload(cookies)))
+            AccountLoginStore.signedIn(context, CH_JD, exists.id)
             return
         }
         addAccount(
@@ -454,12 +466,16 @@ object Store {
     fun tbCookies(context: Context): String =
         firstEnabledAccount(context, CH_TAOBAO)?.let { cookieOf(it.payload) } ?: ""
 
-    fun addTbAccount(context: Context, cookies: String) {
+    @Synchronized fun addTbAccount(context: Context, cookies: String) {
         // 去重：同账号（unb/cookie1 尾号）已存在 → 更新凭证而非重复新增
         val label = "淘宝账号 · ${tbLabelOf(cookies)}"
-        val exists = accounts(context, CH_TAOBAO).firstOrNull { it.label == label }
+        val exists = accounts(context, CH_TAOBAO).firstOrNull {
+            cookieValue(cookies, "unb").isNotBlank() &&
+                cookieValue(cookieOf(it.payload), "unb") == cookieValue(cookies, "unb")
+        }
         if (exists != null) {
-            updateAccount(context, CH_TAOBAO, exists.copy(payload = cookiePayload(cookies), enabled = true))
+            updateAccount(context, CH_TAOBAO, exists.copy(payload = cookiePayload(cookies)))
+            AccountLoginStore.signedIn(context, CH_TAOBAO, exists.id)
             return
         }
         addAccount(
@@ -490,7 +506,7 @@ object Store {
     fun pddCookies(context: Context): String =
         firstEnabledAccount(context, CH_PDD)?.let { cookieOf(it.payload) } ?: ""
 
-    fun addPddAccount(context: Context, cookies: String, webProfile: String = "") {
+    @Synchronized fun addPddAccount(context: Context, cookies: String, webProfile: String = "") {
         val uid = PddSession.userId(cookies)
         require(PddSession.hasCredentials(cookies)) { "Missing PDD credentials" }
         val payload = json.encodeToString(mapOf("cookie" to cookies, "webProfile" to webProfile))
@@ -499,7 +515,8 @@ object Store {
             PddSession.userId(cookieOf(it.payload)) == uid
         }
         if (exists != null) {
-            updateAccount(context, CH_PDD, exists.copy(payload = payload, enabled = true))
+            updateAccount(context, CH_PDD, exists.copy(payload = payload))
+            AccountLoginStore.signedIn(context, CH_PDD, exists.id)
         } else {
             addAccount(context, CH_PDD, BoundAccount(
                 id = java.util.UUID.randomUUID().toString(),
@@ -721,7 +738,7 @@ object Store {
         val e = map[mailNo] ?: return true
         if (e.points.isEmpty()) return true
         if (done || e.done) return false // 已完成：轨迹不会再变，始终用已保存的
-        return System.currentTimeMillis() - e.fetchedAt > 3600 * 1000L
+        return e.logisticsVersion < 1 || System.currentTimeMillis() - e.fetchedAt > 3600 * 1000L
     }
 
     fun pddTraceLastFetch(context: Context, mailNo: String): Long {
@@ -736,7 +753,8 @@ object Store {
         mailNo: String,
         points: List<DetailPoint>,
         done: Boolean = false,
-        fetchedAt: Long = System.currentTimeMillis()
+        fetchedAt: Long = System.currentTimeMillis(),
+        logisticsVersion: Int = 0
     ) {
         if (points.isEmpty()) return
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -745,7 +763,7 @@ object Store {
                 prefs.getString(KEY_PDD_TRACES, null) ?: "{}"
             )
         }.getOrElse { emptyMap() }.toMutableMap()
-        map[mailNo] = PddTraceCache(fetchedAt = fetchedAt, points = points, done = done)
+        map[mailNo] = PddTraceCache(fetchedAt = fetchedAt, points = points, done = done, logisticsVersion = logisticsVersion)
         // 始终保存：仅做超大安全上限（2000 单），正常量级不淘汰
         val trimmed = map.entries.sortedByDescending { it.value.fetchedAt }.take(2000).associate { it.key to it.value }
         prefs.edit().putString(KEY_PDD_TRACES, json.encodeToString(trimmed)).commit()
@@ -803,180 +821,17 @@ object Store {
         prefs.edit().putString(KEY_TB_TRACES, json.encodeToString(trimmed)).commit()
     }
 
-    /**
-     * 主题。默认 **lark（温暖纸感 · 衬线）**——纸感衬线是云雀的主打视觉身份，
-     * 新装用户第一眼就该看到它（配色默认 warm、字体默认 serif，与之一致）。
-     * 想要跟随系统壁纸取色的用户在设置里切「莫奈取色」。
-     */
-    fun theme(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME, "lark") ?: "lark"
-
-    fun saveTheme(context: Context, theme: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME, theme)
-        }
-        com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(context)
-    }
-
-    fun colorScheme(context: Context): String =
-        if (customSeparate(context)) {
-            if (isNight(context)) colorSchemeNight(context) else colorSchemeDay(context)
-        } else {
-            colorSchemeCombined(context)
-        }
-
-    fun saveColorScheme(context: Context, scheme: String) {
-        if (customSeparate(context)) {
-            if (isNight(context)) saveColorSchemeNight(context, scheme) else saveColorSchemeDay(context, scheme)
-        } else {
-            saveColorSchemeCombined(context, scheme)
-        }
-    }
-
-    private fun colorSchemeCombined(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME_COLOR, "warm") ?: "warm"
-
-    fun colorSchemeDay(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME_COLOR_DAY, null) ?: colorSchemeCombined(context)
-
-    fun colorSchemeNight(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME_COLOR_NIGHT, null) ?: colorSchemeCombined(context)
-
-    fun saveColorSchemeDay(context: Context, scheme: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME_COLOR_DAY, scheme)
-        }
-    }
-
-    fun saveColorSchemeNight(context: Context, scheme: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME_COLOR_NIGHT, scheme)
-        }
-    }
-
-    private fun saveColorSchemeCombined(context: Context, scheme: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME_COLOR, scheme)
-        }
-    }
-
-    fun themeFont(context: Context): String =
-        if (customSeparate(context)) {
-            if (isNight(context)) themeFontNight(context) else themeFontDay(context)
-        } else {
-            themeFontCombined(context)
-        }
-
-    fun saveThemeFont(context: Context, font: String) {
-        if (customSeparate(context)) {
-            if (isNight(context)) saveThemeFontNight(context, font) else saveThemeFontDay(context, font)
-        } else {
-            saveThemeFontCombined(context, font)
-        }
-    }
-
-    private fun themeFontCombined(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME_FONT, "serif") ?: "serif"
-
-    fun themeFontDay(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME_FONT_DAY, null) ?: themeFontCombined(context)
-
-    fun themeFontNight(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_THEME_FONT_NIGHT, null) ?: themeFontCombined(context)
-
-    fun saveThemeFontDay(context: Context, font: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME_FONT_DAY, font)
-        }
-    }
-
-    fun saveThemeFontNight(context: Context, font: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME_FONT_NIGHT, font)
-        }
-    }
-
-    private fun saveThemeFontCombined(context: Context, font: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(KEY_THEME_FONT, font)
-        }
-    }
-
-    fun customSeparate(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_CUSTOM_SEPARATE, false)
-
-    fun saveCustomSeparate(context: Context, separate: Boolean) {
-        val e = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-        if (separate) {
-            if (!customSeparate(context)) {
-                val color = colorSchemeCombined(context)
-                val font = themeFontCombined(context)
-                val paper = paperIntensityCombined(context)
-                e.putString(KEY_THEME_COLOR_DAY, color)
-                e.putString(KEY_THEME_COLOR_NIGHT, color)
-                e.putString(KEY_THEME_FONT_DAY, font)
-                e.putString(KEY_THEME_FONT_NIGHT, font)
-                e.putInt(KEY_PAPER_DAY, paper)
-                e.putInt(KEY_PAPER_NIGHT, paper)
-            }
-        } else {
-            e.putString(KEY_THEME_COLOR, colorScheme(context))
-            e.putString(KEY_THEME_FONT, themeFont(context))
-            e.putInt(KEY_PAPER_INTENSITY, paperIntensity(context))
-        }
-        e.putBoolean(KEY_CUSTOM_SEPARATE, separate)
-        e.commit()
-    }
-
-    fun paperIntensity(context: Context): Int =
-        if (customSeparate(context)) {
-            if (isNight(context)) paperIntensityNight(context) else paperIntensityDay(context)
-        } else {
-            paperIntensityCombined(context)
-        }
-
-    fun paperIntensityDay(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_PAPER_DAY, paperIntensityCombined(context))
-
-    fun paperIntensityNight(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_PAPER_NIGHT, paperIntensityCombined(context))
-
-    fun savePaperIntensityDay(context: Context, intensity: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putInt(KEY_PAPER_DAY, intensity.coerceIn(0, 200))
-        }
-    }
-
-    fun savePaperIntensityNight(context: Context, intensity: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putInt(KEY_PAPER_NIGHT, intensity.coerceIn(0, 200))
-        }
-    }
-
-    private fun paperIntensityCombined(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_PAPER_INTENSITY, 100)
-
-    private fun isNight(context: Context): Boolean {
-        val mode = context.resources.configuration.uiMode and
-            android.content.res.Configuration.UI_MODE_NIGHT_MASK
-        return mode == android.content.res.Configuration.UI_MODE_NIGHT_YES
-    }
-
-    fun savePaperIntensity(context: Context, intensity: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putInt(KEY_PAPER_INTENSITY, intensity.coerceIn(0, 200))
-        }
+    /** 升级时只删除已停用的主题偏好，账号、快递与其他设置保留。 */
+    fun clearLegacyThemePreferences(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val keys = listOf(
+            "theme", "theme_color", "theme_font", "theme_color_day", "theme_color_night",
+            "theme_font_day", "theme_font_night", "paper_intensity_day", "paper_intensity_night",
+            "custom_separate", "paper_intensity"
+        )
+        if (keys.none { prefs.contains(it) }) return false
+        prefs.edit { keys.forEach { remove(it) } }
+        return true
     }
 
     fun widgetShowDelivering(context: Context): Boolean =

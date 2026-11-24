@@ -15,11 +15,13 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.pm.PackageInfoCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
@@ -27,7 +29,15 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.TextInputLayout
 import com.halo.expressassistant.R
+import com.halo.expressassistant.PackageAutoImport
 import com.halo.expressassistant.api.XiaomiApi
+import com.halo.expressassistant.api.CainiaoRenewal
+import com.halo.expressassistant.api.CainiaoServiceException
+import com.halo.expressassistant.service.CainiaoLoginCaptureService
+import com.halo.expressassistant.embedded.HostedCainiao
+import com.halo.expressassistant.embedded.EmbeddedCainiaoLogin
+import com.halo.expressassistant.data.AccountLoginStore
+import com.halo.expressassistant.data.LoginStatus
 import com.halo.expressassistant.data.Store
 import com.halo.expressassistant.databinding.ActivitySettingsBinding
 import kotlinx.coroutines.CoroutineScope
@@ -41,6 +51,15 @@ class SettingsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivitySettingsBinding
     private var addressInput: EditText? = null
+    private var smsImportStatus: TextView? = null
+    private var cainiaoSheet: BottomSheetDialog? = null
+    private var accountSheetRefresh: (() -> Unit)? = null
+    private val loginChanges = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == AccountLoginStore.CHANGE_KEY || key?.endsWith("_accounts") == true) runOnUiThread {
+            refreshButtons()
+            accountSheetRefresh?.invoke()
+        }
+    }
     private val requestXiaomi = 100
     private val requestJd = 101
     private val requestTb = 102
@@ -52,15 +71,15 @@ class SettingsActivity : AppCompatActivity() {
         binding = ActivitySettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
         EdgeToEdge.apply(this, binding.root)
-        Paper.apply(this, binding.root, binding.toolbar)
         binding.toolbar.setNavigationOnClickListener { finish() }
 
-        binding.rowTheme.setOnClickListener { showThemeSheet() }
         binding.rowAddress.setOnClickListener { showAddressSheet() }
+        binding.rowAutoImport.setOnClickListener { showAutoImportSheet() }
         binding.rowXiaomiLogin.setOnClickListener { showXiaomiSheet() }
         binding.rowJdLogin.setOnClickListener { showJdSheet() }
         binding.rowTbLogin.setOnClickListener { showTbSheet() }
         binding.rowPddLogin.setOnClickListener { showPddSheet() }
+        binding.rowCainiaoLogin.setOnClickListener { showCainiaoSheet() }
         binding.rowHidden.setOnClickListener { showHiddenDialog() }
         binding.rowWidget.setOnClickListener { showWidgetSheet() }
         binding.rowPoll.setOnClickListener { showPollSheet() }
@@ -69,6 +88,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.rowAbout.setOnClickListener { showAboutSheet() }
         binding.rowSupport.setOnClickListener { showSupportDialog() }
         refreshButtons()
+        binding.root.post { openRequestedLogin() }
     }
 
     /** 打开当前维护仓库。 */
@@ -77,34 +97,217 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun refreshButtons() {
-        binding.themeSummary.text = themeLabel()
-        binding.xiaomiLoginSummary.text = accountSummary(Store.CH_XIAOMI, "小米")
-        binding.jdLoginSummary.text = accountSummary(Store.CH_JD, "京东")
-        binding.tbLoginSummary.text = accountSummary(Store.CH_TAOBAO, "淘宝")
-        binding.pddLoginSummary.text = accountSummary(Store.CH_PDD, "拼多多")
+        binding.autoImportSummary.text = "短信${if (PackageAutoImport.smsEnabled(this) && PackageAutoImport.hasSmsPermission(this)) "已开启" else "未开启"} · 剪贴板${if (PackageAutoImport.clipboardEnabled(this)) "已开启" else "已关闭"}"
+        smsImportStatus?.text = smsPermissionSummary()
+        bindAccountSummary(binding.xiaomiLoginSummary, Store.CH_XIAOMI)
+        bindAccountSummary(binding.jdLoginSummary, Store.CH_JD)
+        bindAccountSummary(binding.tbLoginSummary, Store.CH_TAOBAO)
+        bindAccountSummary(binding.pddLoginSummary, Store.CH_PDD)
         binding.hiddenSummary.text = "${Store.xiaomiHidden(this).size} 个已删除"
         val poll = Store.pollIntervalMin(this)
         binding.pollSummary.text = if (poll <= 0) "默认关闭" else "每 $poll 分钟 · 仅轮询有在途跟踪件的平台"
         binding.addressSummary.text = addressSummaryLabel()
+        refreshCainiaoSummary()
     }
 
-    /** 清除小米域 WebView Cookie（被 removeAllCookies 取代；保留兼容引用） */
-    private fun clearXiaomiCookies() {
-        val cm = android.webkit.CookieManager.getInstance()
-        for (host in listOf(
-            "https://account.xiaomi.com",
-            "https://api.assistant.miui.com",
-            "https://i.mi.com",
-            "https://passport.xiaomi.com"
-        )) {
-            val cookie = cm.getCookie(host) ?: continue
-            for (part in cookie.split(";")) {
-                val k = part.trim().split("=", limit = 2).getOrNull(0)?.trim() ?: continue
-                if (k.isEmpty()) continue
-                cm.setCookie(host, "$k=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/")
+    override fun onResume() {
+        super.onResume()
+        getSharedPreferences("express_store", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(loginChanges)
+        refreshButtons()
+        accountSheetRefresh?.invoke()
+        PackageAutoImport.scanSms(this)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openRequestedLogin()
+    }
+
+    override fun onPause() {
+        getSharedPreferences("express_store", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(loginChanges)
+        super.onPause()
+    }
+
+    private fun openRequestedLogin() {
+        when (intent.getStringExtra(EXTRA_LOGIN_CHANNEL)) {
+            Store.CH_XIAOMI -> showXiaomiSheet()
+            Store.CH_JD -> showJdSheet()
+            Store.CH_TAOBAO -> showTbSheet()
+            Store.CH_PDD -> showPddSheet()
+            AccountLoginStore.CAINIAO -> showCainiaoSheet()
+            else -> if (intent.getBooleanExtra(EXTRA_CAINIAO_LOGIN, false)) showCainiaoSheet()
+        }
+        intent.removeExtra(EXTRA_LOGIN_CHANNEL)
+        intent.removeExtra(EXTRA_CAINIAO_LOGIN)
+    }
+
+    private fun bindAccountSummary(view: TextView, channel: String) {
+        val expired = Store.accounts(this, channel).count { it.enabled && AccountLoginStore.status(this, channel, it.id) == LoginStatus.EXPIRED }
+        view.text = if (expired > 0) "登录已失效 · ${expired} 个账号需重新登录" else accountSummary(channel, AccountLoginStore.name(channel))
+        styleLoginSummary(view, expired > 0)
+    }
+
+    private fun styleLoginSummary(view: TextView, expired: Boolean, leading: Boolean = false) {
+        view.setTextColor(if (expired) MaterialColors.getColor(this, androidx.appcompat.R.attr.colorError, 0) else onSurfaceVariant())
+        val icon = if (expired) androidx.appcompat.content.res.AppCompatResources.getDrawable(this, R.drawable.ic_login_alert)?.mutate()?.apply {
+            setTint(MaterialColors.getColor(this@SettingsActivity, androidx.appcompat.R.attr.colorError, 0))
+            val size = dp(if (leading) 14 else 18)
+            setBounds(0, 0, size, size)
+        } else null
+        view.setCompoundDrawablesRelative(if (leading) icon else null, null, if (leading) null else icon, null)
+        view.compoundDrawablePadding = dp(8)
+    }
+
+    private fun refreshCainiaoSummary() {
+        lifecycleScope.launch {
+            val snapshot = withContext(Dispatchers.IO) { runCatching { CainiaoRenewal.snapshot(this@SettingsActivity) }.getOrNull() }
+            val expired = AccountLoginStore.status(this@SettingsActivity, AccountLoginStore.CAINIAO) == LoginStatus.EXPIRED ||
+                snapshot?.error == CainiaoServiceException.Kind.LOGIN_EXPIRED
+            binding.cainiaoLoginSummary.text = when {
+                CainiaoLoginCaptureService.state.value.running -> "正在获取登录信息"
+                expired -> "登录已失效 · 需重新登录"
+                snapshot?.material != null -> "已保存登录信息"
+                HostedCainiao.isAvailable() -> "未登录"
+                else -> "从已登录菜鸟获取"
+            }
+            styleLoginSummary(binding.cainiaoLoginSummary, expired)
+        }
+    }
+
+    private fun showCainiaoSheet() {
+        if (CainiaoLoginCaptureService.state.value.running) { showCainiaoCaptureSheet(); return }
+        if (!HostedCainiao.isAvailable()) { showCainiaoCaptureSheet(); return }
+        if (cainiaoSheet?.isShowing == true) return
+        val (sheet, container) = Sheets.create(this, "菜鸟登录", "在快递内完成登录，登录信息仅保存在本机。")
+        cainiaoSheet = sheet
+        val status = TextView(this).apply {
+            textSize = 14f
+            setTextColor(onSurfaceVariant())
+            setPadding(0, dp(12), 0, dp(12))
+        }
+        container.addView(status)
+        val loginButton = MaterialButton(this).apply {
+            text = "登录菜鸟"
+            cornerRadius = dp(24)
+            minHeight = dp(48)
+            setOnClickListener { sheet.dismiss(); EmbeddedCainiaoLogin.login(this@SettingsActivity) }
+        }
+        container.addView(loginButton)
+        fun updateLoginState(message: String) {
+            val expired = AccountLoginStore.status(this@SettingsActivity, AccountLoginStore.CAINIAO) == LoginStatus.EXPIRED
+            status.text = if (expired && message.isBlank()) "登录已失效，重新登录后可继续更新身份码和取件信息。"
+                else message.ifBlank { "登录后可同步身份码和取件信息。" }
+            styleLoginSummary(status, expired)
+            loginButton.text = if (expired) "重新登录" else "登录菜鸟"
+        }
+        updateLoginState("")
+        if (packageManager.getLaunchIntentForPackage("com.cainiao.wireless") != null) {
+            container.addView(sheetNavRow("从已登录菜鸟获取", "其他连接方式", R.drawable.ic_sync) {
+                sheet.dismiss(); showCainiaoCaptureSheet()
+            })
+        }
+        val updates = lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                EmbeddedCainiaoLogin.state.collect { message ->
+                    updateLoginState(message)
+                    refreshCainiaoSummary()
+                }
             }
         }
-        cm.flush()
+        sheet.setOnDismissListener { updates.cancel(); cainiaoSheet = null }
+        sheet.show()
+    }
+
+    private fun showCainiaoCaptureSheet() {
+        if (cainiaoSheet?.isShowing == true) return
+        val (sheet, container) = Sheets.create(this, "菜鸟登录", "从本机已登录的菜鸟获取登录信息，需要 Root 授权。")
+        cainiaoSheet = sheet
+        val installed = packageManager.getLaunchIntentForPackage("com.cainiao.wireless") != null
+        val status = TextView(this).apply {
+            textSize = 14f
+            setTextColor(onSurfaceVariant())
+            setPadding(0, dp(12), 0, dp(12))
+        }
+        container.addView(status)
+        val capture = MaterialButton(this).apply {
+            setOnClickListener {
+                try {
+                    if (CainiaoLoginCaptureService.state.value.running) CainiaoLoginCaptureService.stop(this@SettingsActivity)
+                    else CainiaoLoginCaptureService.start(this@SettingsActivity)
+                } catch (_: Exception) {
+                    Toast.makeText(this@SettingsActivity, "无法启动，请在当前页面重试", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        container.addView(capture)
+        if (installed) container.addView(MaterialButton(this, null, androidx.appcompat.R.attr.borderlessButtonStyle).apply {
+            text = "打开已安装菜鸟"
+            setOnClickListener {
+                val launch = packageManager.getLaunchIntentForPackage("com.cainiao.wireless")
+                if (launch != null) startActivity(launch)
+                else Toast.makeText(this@SettingsActivity, "本机未安装菜鸟，无法使用此获取方式", Toast.LENGTH_LONG).show()
+            }
+        })
+        val updates = lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                CainiaoLoginCaptureService.state.collect { current ->
+                    capture.text = if (current.running) "停止获取" else "开始获取"
+                    capture.isEnabled = installed || current.running
+                    status.text = when {
+                        current.running -> current.message
+                        !installed -> "本机未安装菜鸟，无法使用此获取方式。"
+                        current.message.isNotBlank() -> current.message
+                        else -> "点击开始后，在已安装的菜鸟中登录并打开身份码；获取成功后会自动停止。"
+                    }
+                    refreshCainiaoSummary()
+                }
+            }
+        }
+        sheet.setOnDismissListener { updates.cancel(); cainiaoSheet = null }
+        sheet.show()
+    }
+
+    private fun smsPermissionSummary(): String =
+        if (PackageAutoImport.hasSmsPermission(this)) "自动识别收件箱中的快递运单号，并导入新到短信中的运单。"
+        else "需要短信权限才能读取快递短信。"
+
+    private fun showAutoImportSheet() {
+        val (sheet, container) = Sheets.create(this, "自动导入")
+        container.addView(SwitchMaterial(this).apply {
+            text = "短信中的运单号"
+            isChecked = PackageAutoImport.smsEnabled(this@SettingsActivity)
+            setOnCheckedChangeListener { _, checked ->
+                PackageAutoImport.setSmsEnabled(this@SettingsActivity, checked)
+                if (checked && !PackageAutoImport.hasSmsPermission(this@SettingsActivity)) {
+                    requestPermissions(PackageAutoImport.smsPermissions, 3002)
+                }
+                refreshButtons()
+            }
+        })
+        smsImportStatus = TextView(this).apply {
+            text = smsPermissionSummary()
+            textSize = 13f
+            setTextColor(onSurfaceVariant())
+            setPadding(0, dp(4), 0, dp(12))
+        }
+        container.addView(smsImportStatus)
+        container.addView(MaterialButton(this).apply {
+            text = "短信权限设置"
+            setOnClickListener {
+                startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }
+        })
+        container.addView(SwitchMaterial(this).apply {
+            text = "回到前台时导入剪贴板运单号"
+            isChecked = PackageAutoImport.clipboardEnabled(this@SettingsActivity)
+            setOnCheckedChangeListener { _, checked ->
+                PackageAutoImport.setClipboardEnabled(this@SettingsActivity, checked)
+                refreshButtons()
+            }
+        })
+        sheet.setOnDismissListener { smsImportStatus = null }
+        sheet.show()
     }
 
     private fun addressSummaryLabel(): String {
@@ -124,20 +327,6 @@ class SettingsActivity : AppCompatActivity() {
         return "已绑定 ${list.size} 个 · ${first.label.take(16)}$tail"
     }
 
-    private fun themeLabel(): String = when (Store.theme(this)) {
-        Themes.MONET -> "莫奈取色"
-        Themes.CUSTOM -> {
-            if (Store.customSeparate(this)) {
-                "自定义 · 分昼夜设置"
-            } else {
-                val color = if (Store.colorScheme(this) == "monet") "莫奈" else "温暖"
-                val font = if (Store.themeFont(this) == Themes.FONT_SERIF) "衬线" else "无衬线"
-                "自定义 · $color / $font / 纸感 ${Store.paperIntensity(this)}%"
-            }
-        }
-        else -> "温暖纸感"
-    }
-
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == requestXiaomi || requestCode == requestJd || requestCode == requestTb || requestCode == requestPdd) {
@@ -145,197 +334,6 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-
-    /* ─────────────── 主题外观 ─────────────── */
-
-    private fun showThemeSheet() {
-        val (sheet, container) = Sheets.create(this, "主题外观", "选择主题，或在自定义里自由混搭元素")
-        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        container.addView(body)
-        var changed = false
-        sheet.setOnDismissListener {
-            if (changed) recreate()
-        }
-        renderThemeBody(sheet, body) { changed = true }
-        sheet.show()
-    }
-
-    private fun renderThemeBody(
-        sheet: BottomSheetDialog,
-        body: LinearLayout,
-        markChanged: () -> Unit = {}
-    ) {
-        body.removeAllViews()
-        val theme = Store.theme(this)
-        body.addView(
-            Sheets.optionRow(this, "莫奈取色", "跟随系统壁纸 · 无衬线 · 无纸纹", theme == Themes.MONET) {
-                Store.saveTheme(this@SettingsActivity, Themes.MONET)
-                Store.saveColorScheme(this@SettingsActivity, "monet")
-                Store.saveThemeFont(this@SettingsActivity, Themes.FONT_SANS)
-                Store.savePaperIntensity(this@SettingsActivity, 0)
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        body.addView(
-            Sheets.optionRow(this, "温暖纸感", "温暖配色 · 衬线 · 纸纹", theme == Themes.LARK) {
-                Store.saveTheme(this@SettingsActivity, Themes.LARK)
-                Store.saveColorScheme(this@SettingsActivity, "warm")
-                Store.saveThemeFont(this@SettingsActivity, Themes.FONT_SERIF)
-                Store.savePaperIntensity(this@SettingsActivity, 100)
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        body.addView(
-            Sheets.optionRow(this, "自定义", "混搭莫奈 / 温暖、衬线 / 无衬线、纸感", theme == Themes.CUSTOM) {
-                Store.saveTheme(this@SettingsActivity, Themes.CUSTOM)
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        if (theme == Themes.CUSTOM) {
-            renderCustomTheme(sheet, body, markChanged)
-        }
-    }
-
-    private fun renderCustomTheme(
-        sheet: BottomSheetDialog,
-        body: LinearLayout,
-        markChanged: () -> Unit
-    ) {
-        body.addView(Sheets.sectionTitle(this, "昼夜设置"))
-        body.addView(
-            Sheets.optionRow(this, "白天 / 黑夜分别设置", "开启后可为白天和夜晚分别搭配", Store.customSeparate(this)) {
-                Store.saveCustomSeparate(
-                    this@SettingsActivity,
-                    !Store.customSeparate(this@SettingsActivity)
-                )
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        if (Store.customSeparate(this)) {
-            renderThemeMode(sheet, body, markChanged, "白天", true)
-            renderThemeMode(sheet, body, markChanged, "夜间", false)
-        } else {
-            renderThemeMode(sheet, body, markChanged, null, null)
-        }
-    }
-
-    private fun renderThemeMode(
-        sheet: BottomSheetDialog,
-        body: LinearLayout,
-        markChanged: () -> Unit,
-        label: String?,
-        isDay: Boolean?
-    ) {
-        if (label != null) {
-            body.addView(Sheets.sectionTitle(this, label))
-        }
-        val color = when (isDay) {
-            true -> Store.colorSchemeDay(this)
-            false -> Store.colorSchemeNight(this)
-            null -> Store.colorScheme(this)
-        }
-        val font = when (isDay) {
-            true -> Store.themeFontDay(this)
-            false -> Store.themeFontNight(this)
-            null -> Store.themeFont(this)
-        }
-        val paper = when (isDay) {
-            true -> Store.paperIntensityDay(this)
-            false -> Store.paperIntensityNight(this)
-            null -> Store.paperIntensity(this)
-        }
-
-        body.addView(
-            Sheets.optionRow(this, "配色 · 莫奈取色", null, color == "monet") {
-                when (isDay) {
-                    true -> Store.saveColorSchemeDay(this@SettingsActivity, "monet")
-                    false -> Store.saveColorSchemeNight(this@SettingsActivity, "monet")
-                    null -> Store.saveColorScheme(this@SettingsActivity, "monet")
-                }
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        body.addView(
-            Sheets.optionRow(this, "配色 · 温暖", null, color == "warm") {
-                when (isDay) {
-                    true -> Store.saveColorSchemeDay(this@SettingsActivity, "warm")
-                    false -> Store.saveColorSchemeNight(this@SettingsActivity, "warm")
-                    null -> Store.saveColorScheme(this@SettingsActivity, "warm")
-                }
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        body.addView(
-            Sheets.optionRow(this, "字体 · 衬线", null, font == Themes.FONT_SERIF) {
-                when (isDay) {
-                    true -> Store.saveThemeFontDay(this@SettingsActivity, Themes.FONT_SERIF)
-                    false -> Store.saveThemeFontNight(this@SettingsActivity, Themes.FONT_SERIF)
-                    null -> Store.saveThemeFont(this@SettingsActivity, Themes.FONT_SERIF)
-                }
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-        body.addView(
-            Sheets.optionRow(this, "字体 · 无衬线", null, font == Themes.FONT_SANS) {
-                when (isDay) {
-                    true -> Store.saveThemeFontDay(this@SettingsActivity, Themes.FONT_SANS)
-                    false -> Store.saveThemeFontNight(this@SettingsActivity, Themes.FONT_SANS)
-                    null -> Store.saveThemeFont(this@SettingsActivity, Themes.FONT_SANS)
-                }
-                markChanged()
-                renderThemeBody(sheet, body, markChanged)
-            }
-        )
-
-        body.addView(Sheets.sectionTitle(this, "纸感强度"))
-        val valueText = TextView(this).apply {
-            text = "$paper%"
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(MaterialColors.getColor(this@SettingsActivity, android.R.attr.colorPrimary, 0))
-            gravity = Gravity.END
-        }
-        body.addView(valueText)
-        body.addView(
-            SeekBar(this).apply {
-                max = 200
-                progress = paper
-                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                        if (!fromUser) return
-                        when (isDay) {
-                            true -> Store.savePaperIntensityDay(this@SettingsActivity, progress)
-                            false -> Store.savePaperIntensityNight(this@SettingsActivity, progress)
-                            null -> Store.savePaperIntensity(this@SettingsActivity, progress)
-                        }
-                        valueText.text = "$progress%"
-                        markChanged()
-                        Paper.apply(this@SettingsActivity, binding.root, binding.toolbar)
-                        refreshButtons()
-                    }
-
-                    override fun onStartTrackingTouch(seekBar: SeekBar) {}
-
-                    override fun onStopTrackingTouch(seekBar: SeekBar) {}
-                })
-            }
-        )
-        body.addView(
-            TextView(this).apply {
-                text = "0 为关闭纸纹"
-                textSize = 12f
-                setTextColor(onSurfaceVariant())
-                setPadding(0, 2, 0, 0)
-            }
-        )
-    }
 
     /* ─────────────── 小组件 ─────────────── */
 
@@ -410,12 +408,12 @@ class SettingsActivity : AppCompatActivity() {
         sheet.show()
     }
 
-    /* ─────────────── 关于云雀 ─────────────── */
+    /* ─────────────── 关于 ─────────────── */
 
     private fun showAboutSheet() {
-        val (sheet, container) = Sheets.create(this, "关于快递助手")
+        val (sheet, container) = Sheets.create(this, "关于快递")
         container.addView(TextView(this).apply {
-            text = "快递助手 v${UpdateChecker.versionName(this@SettingsActivity)}\nAlexbeatsZ/ExpressAssistant"
+            text = "快递 v${UpdateChecker.versionName(this@SettingsActivity)}\nAlexbeatsZ/ExpressAssistant"
             textSize = 16f
             setPadding(0, dp(12), 0, dp(20))
         })
@@ -541,10 +539,11 @@ class SettingsActivity : AppCompatActivity() {
         requestCode: Int,
         loginWarning: String? = null
     ) {
-        val (sheet, container) = Sheets.create(this, title)
+        val (sheet, container) = Sheets.create(this, title.replace("登录", "账号"))
+        (container.getChildAt(0) as? TextView)?.apply { textSize = 24f; typeface = Typeface.DEFAULT }
         container.addView(
             TextView(this).apply {
-                text = hint
+                text = "登录信息仅保存在本机"
                 textSize = 14f
                 setLineSpacing(0f, 1.3f)
                 setTextColor(onSurfaceVariant())
@@ -553,6 +552,16 @@ class SettingsActivity : AppCompatActivity() {
         )
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         container.addView(list)
+
+        fun login() {
+            fun go() {
+                sheet.dismiss()
+                startActivityForResult(Intent(this@SettingsActivity, loginActivity), requestCode)
+            }
+            if (loginWarning == null) go()
+            else MaterialAlertDialogBuilder(this@SettingsActivity).setTitle("登录提示").setMessage(loginWarning)
+                .setPositiveButton("继续登录") { _, _ -> go() }.setNegativeButton("取消", null).show()
+        }
 
         fun render() {
             list.removeAllViews()
@@ -566,9 +575,14 @@ class SettingsActivity : AppCompatActivity() {
                 })
             }
             for (a in accounts) {
+                val expired = AccountLoginStore.status(this@SettingsActivity, channel, a.id) == LoginStatus.EXPIRED
                 val card = LinearLayout(this@SettingsActivity).apply {
                     orientation = LinearLayout.VERTICAL
-                    setPadding(0, dp(6), 0, dp(6))
+                    setPadding(dp(20), dp(18), dp(20), dp(12))
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = dp(24).toFloat()
+                        setColor(MaterialColors.getColor(this@SettingsActivity, com.google.android.material.R.attr.colorSurfaceContainerLowest, 0))
+                    }
                 }
                 // 第一行：账号名 + 状态（占满宽度）| 启停开关
                 val name = TextView(this@SettingsActivity).apply {
@@ -582,12 +596,14 @@ class SettingsActivity : AppCompatActivity() {
                 val sub = TextView(this@SettingsActivity).apply {
                     val phones = if (channel == Store.CH_XIAOMI) Store.parseXiaomiCred(a.payload).phones else emptyList()
                     text = when {
+                        expired -> "登录已失效" + if (!a.enabled) " · 已停用" else ""
                         !a.enabled -> "已停用"
                         channel == Store.CH_XIAOMI && phones.isNotEmpty() -> "已绑手机号：" + phones.joinToString("、") { Store.maskPhone(it) }
-                        else -> "同步中"
+                        AccountLoginStore.status(this@SettingsActivity, channel, a.id) == LoginStatus.VALID -> "已登录 · 已启用同步"
+                        else -> "已绑定 · 已启用同步"
                     }
                     textSize = 12f
-                    setTextColor(onSurfaceVariant())
+                    styleLoginSummary(this, expired, leading = true)
                     setPadding(0, dp(2), 0, 0)
                     maxLines = 1
                     ellipsize = android.text.TextUtils.TruncateAt.END
@@ -599,6 +615,16 @@ class SettingsActivity : AppCompatActivity() {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
                 }
+                topRow.addView(ImageView(this@SettingsActivity).apply {
+                    setImageResource(R.drawable.ic_account)
+                    setColorFilter(MaterialColors.getColor(this@SettingsActivity, androidx.appcompat.R.attr.colorPrimary, 0))
+                    setPadding(dp(10), dp(10), dp(10), dp(10))
+                    importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(MaterialColors.getColor(this@SettingsActivity, com.google.android.material.R.attr.colorSecondaryContainer, 0))
+                    }
+                }, LinearLayout.LayoutParams(dp(42), dp(42)).apply { marginEnd = dp(12) })
                 topRow.addView(texts, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
                 topRow.addView(SwitchMaterial(this).apply {
                     isChecked = a.enabled
@@ -609,15 +635,29 @@ class SettingsActivity : AppCompatActivity() {
                     }
                 })
                 card.addView(topRow)
+                if (expired) {
+                    card.addView(TextView(this@SettingsActivity).apply {
+                        text = "暂时无法同步新快递和取件信息。重新登录后可继续同步。"
+                        textSize = 14f
+                        setTextColor(onSurfaceVariant())
+                        setPadding(0, dp(16), 0, dp(12))
+                    })
+                    card.addView(MaterialButton(this@SettingsActivity).apply {
+                        text = "重新登录"
+                        cornerRadius = dp(24)
+                        minHeight = dp(48)
+                        setOnClickListener { login() }
+                    }, LinearLayout.LayoutParams(-1, -2))
+                }
                 // 第二行：操作按钮靠右一排（小按钮）
                 val ops = LinearLayout(this@SettingsActivity).apply {
                     orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.END
+                    gravity = Gravity.CENTER_HORIZONTAL
                     setPadding(0, dp(4), 0, 0)
                 }
                 fun opBtn(text: String, danger: Boolean = false, onClick: () -> Unit) {
                     ops.addView(
-                        MaterialButton(this@SettingsActivity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                        MaterialButton(this@SettingsActivity, null, androidx.appcompat.R.attr.borderlessButtonStyle).apply {
                             this.text = text
                             textSize = 12f
                             setPadding(dp(10), 0, dp(10), 0)
@@ -654,37 +694,23 @@ class SettingsActivity : AppCompatActivity() {
                         .show()
                 }
                 card.addView(ops)
-                list.addView(card)
+                list.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
             }
             list.addView(
-                MaterialButton(this).apply {
-                    text = "＋ 绑定新账号"
+                MaterialButton(this, null, androidx.appcompat.R.attr.borderlessButtonStyle).apply {
+                    text = "＋ 添加账号"
                     layoutParams = LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
                     ).apply { topMargin = dp(10) }
                     setOnClickListener {
-                        fun go() {
-                            sheet.dismiss()
-                            startActivityForResult(
-                                Intent(this@SettingsActivity, loginActivity),
-                                requestCode
-                            )
-                        }
-                        if (loginWarning == null) {
-                            go()
-                        } else {
-                            MaterialAlertDialogBuilder(this@SettingsActivity)
-                                .setTitle("登录提示")
-                                .setMessage(loginWarning)
-                                .setPositiveButton("继续登录") { _, _ -> go() }
-                                .setNegativeButton("取消", null)
-                                .show()
-                        }
+                        login()
                     }
                 }
             )
         }
+        accountSheetRefresh = { render() }
+        sheet.setOnDismissListener { accountSheetRefresh = null }
         render()
         sheet.show()
     }
@@ -962,6 +988,10 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 3002) {
+            PackageAutoImport.scanSms(this)
+            refreshButtons()
+        }
         if (requestCode == REQUEST_LOCATION) {
             val input = addressInput ?: return
             locateAddress(input) {
@@ -1420,6 +1450,8 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     companion object {
+        const val EXTRA_CAINIAO_LOGIN = "cainiao_login"
+        const val EXTRA_LOGIN_CHANNEL = "login_channel"
         private const val REQUEST_LOCATION = 4001
     }
 }

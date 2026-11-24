@@ -75,8 +75,9 @@ object PddWeb {
         val account = Store.accounts(context, Store.CH_PDD).firstOrNull {
             PddSession.userId(Store.cookieOf(it.payload)) == uid
         } ?: return
+        if (Store.cookieOf(account.payload) != expectedCookies) return
         val payload = JSONObject(account.payload).put("cookie", fresh).toString()
-        if (payload != account.payload) Store.updateAccount(context, Store.CH_PDD, account.copy(payload = payload))
+        if (payload != account.payload) Store.updateAccountPayload(context, Store.CH_PDD, account, payload)
         cm.flush()
     }
 

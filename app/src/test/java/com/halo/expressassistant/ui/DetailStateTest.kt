@@ -26,7 +26,8 @@ class DetailStateTest {
         val response = detail(DetailPoint("快件到达驿站，取件码：8-2-123，预计11月8日送达", "2026-11-06 08:00"))
         val saved = DetailState.reconcile(item, response)
         assertEquals("8-2-123", saved.pickupCode)
-        assertEquals("11月8日送达", saved.eta)
+        assertEquals("", saved.eta)
+        assertEquals("待取件", saved.stateLabel())
         assertEquals(saved, ParcelState.withTrace(saved, emptyList()))
         assertEquals(saved, DetailState.reconcile(saved, response))
     }

@@ -2,13 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <queries>
+        <package android:name="com.cainiao.wireless" />
         <package android:name="com.miui.personalassistant" />
         <package android:name="com.xiaomi.account" />
     </queries>
@@ -22,6 +29,10 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.ExpressAssistant">
+
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposedminversion" android:value="82" />
+        <meta-data android:name="xposeddescription" android:value="ExpressAssistant integrated Cainiao runtime" />
 
         <!-- com.miui.system 只有小米 ROM 有，required=false 才能让其他品牌安装；
              小米专属功能（miui.os.Build / CoderUtils 签名）全部走反射并有降级兜底 -->
@@ -105,6 +116,15 @@
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <receiver
+            android:name=".service.PackageSmsReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
             android:name=".widget.ExpressWidgetProvider"
             android:exported="false">
             <intent-filter>
@@ -116,6 +136,15 @@
         </receiver>
 
 
+
+        <service
+            android:name=".service.CainiaoLoginCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-started on-device Cainiao login capture with Root access until stopped or verified" />
+        </service>
 
         <service
             android:name=".service.ExpressImportService"

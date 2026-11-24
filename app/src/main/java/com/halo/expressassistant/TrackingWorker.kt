@@ -28,20 +28,20 @@ class TrackingWorker(context: Context, params: WorkerParameters) : CoroutineWork
             // 只同步在途跟踪件所属平台；京东/淘宝/拼多多 用 WebView 抓取（无窗口环境容错），小米走 API
             val skip = Store.CHANNELS.filter { it !in platforms }.toSet()
             SyncEngine.sync(ctx, skip)
-            val items = Store.items(ctx)
-            val updated = items.map { item ->
-                if (!item.tracked) {
-                    item
-                } else if (item.notifiedText.isBlank() && item.notifiedTime.isBlank()) {
-                    item.copy(notifiedText = item.latestText, notifiedTime = item.latestTime)
-                } else if (item.latestTime.isNotEmpty() && item.latestTime > item.notifiedTime) {
-                    TrackingNotifier.notify(ctx, item)
-                    item.copy(notifiedText = item.latestText, notifiedTime = item.latestTime)
-                } else {
-                    item
+            Store.updateItems(ctx) { items ->
+                items.map { item ->
+                    if (!item.tracked) {
+                        item
+                    } else if (item.notifiedText.isBlank() && item.notifiedTime.isBlank()) {
+                        item.copy(notifiedText = item.latestText, notifiedTime = item.latestTime)
+                    } else if (item.latestTime.isNotEmpty() && item.latestTime > item.notifiedTime) {
+                        TrackingNotifier.notify(ctx, item)
+                        item.copy(notifiedText = item.latestText, notifiedTime = item.latestTime)
+                    } else {
+                        item
+                    }
                 }
             }
-            Store.saveItems(ctx, updated)
             Result.success()
         } catch (e: Throwable) {
             Result.retry()
