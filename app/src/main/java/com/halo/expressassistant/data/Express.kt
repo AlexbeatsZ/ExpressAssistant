@@ -55,7 +55,7 @@ data class ExpressItem(
     val stateOverride: String = "",
     val partitionOverride: String = "",
     val jumpLinks: String = "",
-    /** 数据来源渠道：xiaomi / jd / taobao / pdd */
+    /** 数据来源渠道：xiaomi / jd / taobao / pdd / cainiao / manual / sms */
     val source: String = "xiaomi",
     /** 多源绑定：该件来自哪个账号（BoundAccount.id） */
     val accountId: String = "",
@@ -77,7 +77,13 @@ data class ExpressItem(
     /** 订单已付款但尚未生成运单；mailNo 此时只作本地记录键。 */
     val orderOnly: Boolean = false
 ) {
-    fun displayReference(): String = if (orderOnly) "订单号：$queryChannel" else mailNo
+    val isSmsPickup: Boolean get() = source == "sms"
+
+    fun displayReference(): String = when {
+        isSmsPickup -> ""
+        orderOnly -> "订单号：$queryChannel"
+        else -> mailNo
+    }
     fun isCompleted(): Boolean {
         if (state == 3 || stateNum in 106..107) return true
         if (receiptConfirmed) return true

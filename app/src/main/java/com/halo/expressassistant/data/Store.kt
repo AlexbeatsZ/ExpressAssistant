@@ -2,14 +2,23 @@ package com.halo.expressassistant.data
 
 import android.content.Context
 import androidx.core.content.edit
+import com.halo.expressassistant.api.PickupCodeRules
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import java.util.UUID
 
 object Store {
     private const val PREFS = "express_store"
     private const val KEY_LIST = "items"
+    private const val KEY_SMS_PICKUP_SEEN = "sms_pickup_seen"
+    internal const val SMS_PICKUP_LOOKBACK = 7 * 24 * 60 * 60 * 1000L
+    private val smsTimeFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT)
     private const val KEY_KD_KEY = "kd_key"
     private const val KEY_KD_CUSTOMER = "kd_customer"
     private const val KEY_XIAOMI_TOKEN = "xiaomi_token"
@@ -73,28 +82,65 @@ object Store {
         }
     }
 
-    @Synchronized fun saveItems(context: Context, items: List<ExpressItem>) {
+    @Synchronized fun saveItems(context: Context, items: List<ExpressItem>): List<ExpressItem> {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        prefs.edit {
-            putString(KEY_LIST, json.encodeToString(reconcileItems(prefs, items)))
-        }
+        val reconciled = reconcileItems(prefs, items)
+        prefs.edit { putString(KEY_LIST, json.encodeToString(reconciled)) }
         com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(context)
+        return reconciled
     }
 
     @Synchronized fun updateItems(context: Context, update: (List<ExpressItem>) -> List<ExpressItem>): List<ExpressItem> {
         val previous = items(context)
         val next = update(previous)
-        if (next != previous) saveItems(context, next)
-        return next
+        return if (next != previous) saveItems(context, next) else previous
     }
 
     fun seed(): List<ExpressItem> = emptyList()
+
+    @Synchronized fun importSmsPickupCodes(context: Context, codes: List<String>, sentAt: Long): Boolean {
+        val cutoff = System.currentTimeMillis() - SMS_PICKUP_LOOKBACK
+        if (codes.isEmpty() || sentAt < cutoff) return true
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val seen = runCatching { json.decodeFromString<Map<String, Long>>(prefs.getString(KEY_SMS_PICKUP_SEEN, "{}").orEmpty()) }
+            .getOrDefault(emptyMap()).filterValues { it >= cutoff }.toMutableMap()
+        val current = items(context)
+        val existing = current.mapNotNullTo(HashSet()) { item ->
+            item.pickupCode.takeIf { it.isNotBlank() && item.isAwaitingPickup() }?.let(PickupCodeRules::key)
+        }
+        val additions = mutableListOf<ExpressItem>()
+        var seenChanged = false
+        for (code in codes.filter(PickupCodeRules::isValidSmsCode)) {
+            val key = PickupCodeRules.key(code)
+            if (sentAt <= (seen[key] ?: 0L)) continue
+            seen[key] = sentAt
+            seenChanged = true
+            if (!existing.add(key)) continue
+            val id = "sms-${UUID.randomUUID()}"
+            additions += ExpressItem(
+                id = id, companyCode = "", companyName = "短信取件", mailNo = id, source = "sms",
+                latestTime = smsTimeFormat.format(Instant.ofEpochMilli(sentAt).atZone(ZoneId.systemDefault())),
+                stateName = "待取件", pickupCode = code, pickupCodeSource = "sms"
+            )
+        }
+        if (!seenChanged) return prefs.edit().commit()
+        val editor = prefs.edit().putString(KEY_SMS_PICKUP_SEEN, json.encodeToString(seen))
+        if (additions.isNotEmpty()) editor.putString(KEY_LIST, json.encodeToString(additions + current))
+        if (!editor.commit()) return false
+        if (additions.isNotEmpty()) com.halo.expressassistant.widget.ExpressWidgetProvider.updateAll(context)
+        return true
+    }
 
     private fun reconcileItems(prefs: android.content.SharedPreferences, items: List<ExpressItem>): List<ExpressItem> {
         val traces = if (items.any { it.source == "pdd" }) runCatching {
             json.decodeFromString<Map<String, PddTraceCache>>(prefs.getString(KEY_PDD_TRACES, null) ?: "{}")
         }.getOrDefault(emptyMap()) else emptyMap()
-        return items.map { ParcelState.withTrace(it, if (it.source == "pdd") traces[it.mailNo]?.points.orEmpty() else emptyList()) }
+        val reconciled = items.map { ParcelState.withTrace(it, if (it.source == "pdd") traces[it.mailNo]?.points.orEmpty() else emptyList()) }
+        if (reconciled.none { it.isSmsPickup }) return reconciled
+        val codes = reconciled.mapNotNullTo(HashSet()) { item ->
+            item.pickupCode.takeIf { !item.isSmsPickup && it.isNotBlank() && item.isAwaitingPickup() }?.let(PickupCodeRules::key)
+        }
+        return reconciled.filter { !it.isSmsPickup || codes.add(PickupCodeRules.key(it.pickupCode)) }
     }
 
     fun manualTraces(context: Context, mailNo: String): List<DetailPoint>? {

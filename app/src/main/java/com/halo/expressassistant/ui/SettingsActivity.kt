@@ -269,7 +269,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun smsPermissionSummary(): String =
-        if (PackageAutoImport.hasSmsPermission(this)) "自动识别收件箱中的快递运单号，并导入新到短信中的运单。"
+        if (PackageAutoImport.hasSmsPermission(this)) "自动识别短信中的运单号和取件码。只有取件码时，也会显示在待取件列表。"
         else "需要短信权限才能读取快递短信。"
 
     private fun showAutoImportSheet() {
@@ -1229,9 +1229,9 @@ class SettingsActivity : AppCompatActivity() {
                     setBackgroundResource(selectableBackground())
                     isClickable = true
                     setOnClickListener {
-                        val current = Store.items(this@SettingsActivity).toMutableList()
-                        if (current.none { it.mailNo == item.mailNo }) current.add(item)
-                        Store.saveItems(this@SettingsActivity, current)
+                        Store.updateItems(this@SettingsActivity) { current ->
+                            if (current.any { it.mailNo == item.mailNo }) current else current + item
+                        }
                         Store.restoreHidden(this@SettingsActivity, item.mailNo)
                         refreshButtons()
                         Toast.makeText(this@SettingsActivity, "已恢复 ${item.companyName}", Toast.LENGTH_SHORT).show()
@@ -1247,7 +1247,7 @@ class SettingsActivity : AppCompatActivity() {
                 )
                 row.addView(
                     TextView(this@SettingsActivity).apply {
-                        text = item.mailNo
+                        text = if (item.isSmsPickup) item.pickupLabel() else item.mailNo
                         textSize = 13f
                         setTextColor(onSurfaceVariant())
                     }
@@ -1316,11 +1316,9 @@ class SettingsActivity : AppCompatActivity() {
                         LinearLayout.LayoutParams.WRAP_CONTENT
                     ).apply { topMargin = dp(10) }
                     setOnClickListener {
-                        val current = Store.items(this@SettingsActivity).toMutableList()
-                        for (item in Store.xiaomiHidden(this@SettingsActivity)) {
-                            if (current.none { it.mailNo == item.mailNo }) current.add(item)
+                        Store.updateItems(this@SettingsActivity) { current ->
+                            (current + Store.xiaomiHidden(this@SettingsActivity)).distinctBy { it.mailNo }
                         }
-                        Store.saveItems(this@SettingsActivity, current)
                         Store.clearHidden(this@SettingsActivity)
                         refreshButtons()
                         Toast.makeText(this@SettingsActivity, "已全部恢复", Toast.LENGTH_SHORT).show()

@@ -48,7 +48,7 @@ object PhoneProvisioning {
         // Parcel/account-only imports preserve the existing encrypted identity session.
         if (session != null) CainiaoSessionStore.save(ctx, session)
         decoded.forEach { (ch, rows) -> rows.forEach { Store.addAccount(ctx, ch, it) } }
-        Store.saveItems(ctx, (items + Store.items(ctx)).distinctBy { it.mailNo })
+        Store.updateItems(ctx) { current -> (items + current).distinctBy { it.mailNo } }
         Store.saveJdGoods(ctx, goods + Store.jdGoods(ctx))
         return "导入完成：${decoded.values.sumOf { it.size }} 个平台账号、${items.size} 件快递"
     }

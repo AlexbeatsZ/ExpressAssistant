@@ -76,6 +76,10 @@ class DetailActivity : AppCompatActivity() {
         var item = Store.items(this).firstOrNull { it.mailNo == inputItem.mailNo } ?: inputItem
         displayedItem = item
         binding.toolbar.inflateMenu(R.menu.detail_menu)
+        if (item.isSmsPickup) {
+            renderDetail()
+            return
+        }
         binding.toolbar.menu.findItem(R.id.action_trace).isVisible = !item.orderOnly
         val traceView = binding.toolbar.menu.findItem(R.id.action_trace).actionView
         if (traceView != null) {
@@ -227,9 +231,9 @@ class DetailActivity : AppCompatActivity() {
                 val current = Store.items(this@DetailActivity).firstOrNull { it.mailNo == item.mailNo } ?: item
                 val reconciled = if (current.source == "manual") current else DetailState.reconcile(current, detail)
                 if (reconciled != current) {
-                    Store.saveItems(this@DetailActivity, Store.items(this@DetailActivity).map {
-                        if (it.mailNo == reconciled.mailNo) reconciled else it
-                    })
+                    Store.updateItems(this@DetailActivity) { currentItems ->
+                        currentItems.map { if (it.mailNo == reconciled.mailNo) reconciled else it }
+                    }
                 }
                 // Store may normalize receipt evidence; the saved snapshot is also the display baseline.
                 item = Store.items(this@DetailActivity).firstOrNull { it.mailNo == item.mailNo } ?: reconciled
@@ -249,9 +253,10 @@ class DetailActivity : AppCompatActivity() {
         val item = displayedItem ?: return
         val scroll = binding.container.parent as? ScrollView
         val previousY = scroll?.scrollY ?: 0
-        binding.toolbar.menu.findItem(R.id.action_trace)?.isVisible = !item.orderOnly
+        binding.toolbar.menu.findItem(R.id.action_trace)?.isVisible = !item.orderOnly && !item.isSmsPickup
         binding.container.removeAllViews()
         addHeader(binding.container, item)
+        if (item.isSmsPickup) return
         val detail = displayedDetail
         when {
             detailError != null -> binding.container.addView(text(detailError!!))
@@ -336,7 +341,7 @@ class DetailActivity : AppCompatActivity() {
             setTextColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.textColorPrimary, Color.BLACK))
         })
         texts.addView(TextView(this).apply {
-            text = item.displayReference()
+            text = if (item.isSmsPickup) item.latestTime else item.displayReference()
             textSize = 13f
             setTextColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.textColorSecondary, Color.GRAY))
             setPadding(0, dp(4), 0, 0)
@@ -425,7 +430,7 @@ class DetailActivity : AppCompatActivity() {
             setTextColor(MaterialColors.getColor(this@DetailActivity, android.R.attr.colorPrimary, Color.BLUE))
         }
         headerProgressText = progressText
-        statusRow.addView(progressText)
+        if (!item.isSmsPickup) statusRow.addView(progressText)
         content.addView(statusRow)
         if (item.stateNum !in 108..111 && progress >= 0) {
             val bar = com.google.android.material.progressindicator.LinearProgressIndicator(this).apply {

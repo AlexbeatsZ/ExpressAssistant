@@ -91,17 +91,19 @@ object PddTraceFetcher {
         if (result.points.isEmpty()) return
         val meta = result.logistics
         Store.savePddTrace(act, item.mailNo, result.points, item.isCompleted(), logisticsVersion = if (meta != null) 1 else 0)
-        Store.saveItems(act, Store.items(act).map {
-            if (it.mailNo != item.mailNo || it.source != "pdd") it else {
-                val enriched = if (meta == null) it else it.copy(
-                    pickupCode = if (it.isCompleted()) "" else meta.pickupCode.ifBlank { if (it.pickupCodeSource == "cainiao") it.pickupCode else "" },
-                    pickupHint = if (it.isCompleted()) "" else meta.pickupHint,
-                    trackingNumber = meta.trackingNumber.ifBlank { it.trackingNumber },
-                    station = meta.station.ifBlank { it.station })
-                DetailState.reconcile(enriched, com.halo.expressassistant.data.ExpressDetail(
-                    it.mailNo, it.companyName, it.state, it.isCompleted(), result.points))
+        Store.updateItems(act) { current ->
+            current.map {
+                if (it.mailNo != item.mailNo || it.source != "pdd") it else {
+                    val enriched = if (meta == null) it else it.copy(
+                        pickupCode = if (it.isCompleted()) "" else meta.pickupCode.ifBlank { if (it.pickupCodeSource == "cainiao") it.pickupCode else "" },
+                        pickupHint = if (it.isCompleted()) "" else meta.pickupHint,
+                        trackingNumber = meta.trackingNumber.ifBlank { it.trackingNumber },
+                        station = meta.station.ifBlank { it.station })
+                    DetailState.reconcile(enriched, com.halo.expressassistant.data.ExpressDetail(
+                        it.mailNo, it.companyName, it.state, it.isCompleted(), result.points))
+                }
             }
-        })
+        }
     }
 
     suspend fun refreshCainiaoPickup(act: Activity, itemKey: String) {
@@ -123,12 +125,14 @@ object PddTraceFetcher {
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: com.halo.expressassistant.api.CainiaoServiceException) { e.kind.name.lowercase() }
         catch (_: Exception) { "unavailable" }
-        Store.saveItems(act, Store.items(act).map {
-            if (it.mailNo != itemKey || it.isCompleted()) it else com.halo.expressassistant.api.CainiaoParcelSync.apply(it, parsed ?: com.halo.expressassistant.api.CainiaoPickup.Result()).copy(
-                pickupCode = if (status in setOf("completed", "abnormal")) "" else code.ifBlank { it.pickupCode },
-                pickupCodeSource = if (code.isNotBlank()) "cainiao" else it.pickupCodeSource,
-                station = station.ifBlank { it.station }, pickupQueryStatus = status, pickupQueriedAt = now)
-        })
+        Store.updateItems(act) { items ->
+            items.map {
+                if (it.mailNo != itemKey || it.isCompleted()) it else com.halo.expressassistant.api.CainiaoParcelSync.apply(it, parsed ?: com.halo.expressassistant.api.CainiaoPickup.Result()).copy(
+                    pickupCode = if (status in setOf("completed", "abnormal")) "" else code.ifBlank { it.pickupCode },
+                    pickupCodeSource = if (code.isNotBlank()) "cainiao" else it.pickupCodeSource,
+                    station = station.ifBlank { it.station }, pickupQueryStatus = status, pickupQueriedAt = now)
+            }
+        }
     }
 
     /** Cached traces and freshly loaded traces share the same reconciliation rules. */
@@ -136,7 +140,9 @@ object PddTraceFetcher {
         val cached = Store.pddTraces(act, item.mailNo) ?: return
         val reconciled = DetailState.reconcile(item, com.halo.expressassistant.data.ExpressDetail(
             item.mailNo, item.companyName, item.state, item.isCompleted(), cached))
-        if (reconciled != item) Store.saveItems(act, Store.items(act).map { if (it.mailNo == item.mailNo) reconciled else it })
+        if (reconciled != item) Store.updateItems(act) { items ->
+            items.map { if (it == item) reconciled else it }
+        }
     }
 
     private suspend fun run(act: Activity, orderId: String, pddCookies: String, silent: Boolean): TraceResult? =

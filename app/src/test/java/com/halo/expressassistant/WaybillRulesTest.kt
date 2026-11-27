@@ -50,6 +50,25 @@ class WaybillRulesTest {
         ))
     }
 
+    @Test fun smsExtractsStandaloneCodesFromLabelsAndPickupInstructions() {
+        assertEquals(listOf("1-2-3456", "A012"), WaybillRules.smsCandidates(
+            "【驿站】取件码为【１－２－３４５６】，另一个包裹请凭 a012 到前台取件，开柜码 A012"
+        ).pickupCodes.map { it.uppercase(java.util.Locale.ROOT) })
+        val longCode = WaybillRules.smsCandidates("您的取件码是123456789012，请及时取件")
+        assertTrue(longCode.waybills.isEmpty())
+        assertEquals(listOf("123456789012"), longCode.pickupCodes)
+    }
+
+    @Test fun smsPreservesWaybillPathAndIgnoresUnrelatedOrMalformedCodes() {
+        val withWaybill = WaybillRules.smsCandidates("快递运单SF1234567890123已到站，取件码1234")
+        assertEquals(listOf("SF1234567890123"), withWaybill.waybills)
+        assertTrue(withWaybill.pickupCodes.isEmpty())
+        listOf("【银行】验证码123456", "验证码1234用于确认快递服务", "凭1234登录账号",
+            "取件码12345678901234567890", "查看 https://example.com/取件码1234").forEach {
+            assertTrue(it, WaybillRules.smsCandidates(it).pickupCodes.isEmpty())
+        }
+    }
+
     @Test fun unrelatedTextStillWorksAsLocalSearchButDoesNotMatchWaybillRules() {
         assertFalse(WaybillRules.isValid("快递公司"))
         assertFalse(WaybillRules.isValid("13800138000"))

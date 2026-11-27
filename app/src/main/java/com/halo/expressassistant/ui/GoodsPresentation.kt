@@ -2,6 +2,7 @@ package com.halo.expressassistant.ui
 
 import android.content.Context
 import android.util.Log
+import com.halo.expressassistant.api.PickupCodeRules
 import com.halo.expressassistant.data.ExpressItem
 import com.halo.expressassistant.data.JdGoods
 import com.halo.expressassistant.data.Store
@@ -17,14 +18,8 @@ object GoodsPresentation {
     private const val TAG = "GoodsPres"
     private const val MAX_NAME_LEN = 12
 
-    private val pickupRe = Regex("""(取件码|取货码|提货码|自提码|驿站码|取件验证码)[:：\s]*([A-Za-z0-9][A-Za-z0-9\-]{1,12})""")
-
     /** 从文本中解析取件码；无则 null */
-    fun pickupCodeFrom(text: String?): String? {
-        if (text.isNullOrBlank()) return null
-        val m = pickupRe.find(text) ?: return null
-        return m.groupValues[2]
-    }
+    fun pickupCodeFrom(text: String?): String? = text?.let(PickupCodeRules::fromTracking)
 
     /** 合并多段文本解析取件码（轨迹全文场景） */
     fun pickupCodeFromParts(parts: List<String?>): String? {

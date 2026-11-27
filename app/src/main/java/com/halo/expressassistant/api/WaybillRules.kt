@@ -15,6 +15,8 @@ object WaybillRules {
         "(?:订单(?:号|编号|号码)|交易(?:号|编号)|取件(?:码|密码|验证码)|取货码|提货码|自提码|验证码|校验码|手机号|(?:联系|客服)?电话)[\\s:：为是]*([A-Za-z0-9-]+)"
     )
 
+    data class SmsCandidates(val waybills: List<String>, val pickupCodes: List<String>)
+
     fun normalise(input: String): String = input.trim().uppercase(Locale.ROOT)
 
     fun isValid(input: String): Boolean {
@@ -23,10 +25,24 @@ object WaybillRules {
             value.count { it in '0'..'9' } >= 6 && value.count { it !in '0'..'9' } <= 6
     }
 
-    fun extract(text: String, fromSms: Boolean = false): List<String> {
-        if (fromSms && !deliveryContext.containsMatchIn(text)) return emptyList()
-        val content = links.replace(text) { " ".repeat(it.value.length) }
-        val excluded = otherReferences.findAll(content).map { it.groups[1]!!.range }.toList()
+    fun extract(text: String, fromSms: Boolean = false): List<String> =
+        if (fromSms) smsCandidates(text).waybills else extractWaybills(withoutLinks(text))
+
+    fun smsCandidates(text: String): SmsCandidates {
+        val content = withoutLinks(PickupCodeRules.normaliseText(text))
+        val pickupMatches = PickupCodeRules.smsMatches(content).toList()
+        val waybills = if (deliveryContext.containsMatchIn(content)) {
+            extractWaybills(content, pickupMatches.map { it.range })
+        } else emptyList()
+        val pickupCodes = if (waybills.isEmpty()) pickupMatches.map { it.value }
+            .filter(PickupCodeRules::isValidSmsCode).distinctBy(PickupCodeRules::key) else emptyList()
+        return SmsCandidates(waybills, pickupCodes)
+    }
+
+    private fun withoutLinks(text: String) = links.replace(text) { " ".repeat(it.value.length) }
+
+    private fun extractWaybills(content: String, pickupRanges: List<IntRange> = emptyList()): List<String> {
+        val excluded = otherReferences.findAll(content).map { it.groups[1]!!.range }.toList() + pickupRanges
         return characters.findAll(content).filter { match ->
             isValid(match.value) && excluded.none { match.range.first <= it.last && match.range.last >= it.first }
         }.map { normalise(it.value) }.distinct().toList()

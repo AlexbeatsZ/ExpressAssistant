@@ -23,6 +23,42 @@ import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class PackageAutoImportTest {
+    @Test fun smsPickupMatchesParcelsInBothArrivalOrdersAndSurvivesReplay() {
+        val base = InstrumentationRegistry.getInstrumentation().targetContext
+        val prefsName = "sms-pickup-test-${java.util.UUID.randomUUID()}"
+        val context = object : ContextWrapper(base) {
+            override fun getSharedPreferences(name: String, mode: Int) = base.getSharedPreferences(prefsName, mode)
+        }
+        val now = System.currentTimeMillis()
+        val parcel = ExpressItem("test-parcel", "", "快递", "SF1234567890123", source = "pdd")
+        try {
+            Store.saveItems(context, listOf(parcel.copy(pickupCode = "a1-2345")))
+            assertTrue(Store.importSmsPickupCodes(context, listOf("Ａ１－２３４５"), now))
+            assertEquals(1, Store.items(context).size)
+            assertFalse(Store.items(context).single().isSmsPickup)
+
+            assertTrue(Store.importSmsPickupCodes(context, listOf("2-3-4567"), now))
+            assertTrue(Store.importSmsPickupCodes(context, listOf("2-3-4567"), now + 1))
+            val sms = Store.items(context).single { it.isSmsPickup }
+            assertTrue(sms.isAwaitingPickup())
+            assertEquals("取件码 2-3-4567", sms.pickupLabel())
+            assertEquals("", sms.displayReference())
+
+            val merged = Store.updateItems(context) { items ->
+                items.map { if (it.mailNo == parcel.mailNo) it.copy(pickupCode = "2-3-4567") else it }
+            }
+            assertEquals(listOf(parcel.mailNo), merged.map { it.mailNo })
+            Store.updateItems(context) { items -> items.map { it.copy(receiptConfirmed = true) } }
+            assertTrue(Store.importSmsPickupCodes(context, listOf("2-3-4567"), now + 1))
+            assertFalse(Store.items(context).any { it.isSmsPickup })
+
+            assertTrue(Store.importSmsPickupCodes(context, listOf("2-3-4567"), now + 2))
+            assertEquals(1, Store.items(context).count { it.isSmsPickup })
+        } finally {
+            base.deleteSharedPreferences(prefsName)
+        }
+    }
+
     @Test fun importDeduplicatesTrackingNumbersAndRespectsHiddenPackages() {
         val base = InstrumentationRegistry.getInstrumentation().targetContext
         val prefsName = "auto-import-test-${java.util.UUID.randomUUID()}"

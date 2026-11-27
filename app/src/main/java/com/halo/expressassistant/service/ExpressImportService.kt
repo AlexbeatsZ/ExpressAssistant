@@ -49,16 +49,15 @@ class ExpressImportService : AccessibilityService() {
         }
         if (numbers.isEmpty()) return
 
-        val items = Store.items(this).toMutableList()
-        val existing = items.map { it.mailNo }.toSet()
-        for (i in numbers.indices) {
+        val imported = numbers.indices.map { i ->
             val mailNo = numbers[i]
-            if (mailNo !in existing) {
-                val (code, name) = companies[i]
-                items.add(ExpressItem(System.currentTimeMillis().toString() + i, code, name, mailNo, originalName = name))
-            }
+            val (code, name) = companies[i]
+            ExpressItem(System.currentTimeMillis().toString() + i, code, name, mailNo, originalName = name)
         }
-        Store.saveItems(this, items)
+        Store.updateItems(this) { current ->
+            val existing = current.mapTo(HashSet()) { it.mailNo }
+            current + imported.filter { it.mailNo !in existing }
+        }
     }
 
     private fun importCainiaoOrTaobao(root: AccessibilityNodeInfo) {
@@ -97,21 +96,15 @@ class ExpressImportService : AccessibilityService() {
             it.contains("202") && (it.contains(":") || it.contains("-"))
         } ?: ""
 
-        val items = Store.items(this).toMutableList()
-        val existing = items.map { it.mailNo }.toSet()
-        for (num in numbers) {
-            if (num !in existing) {
-                items.add(
-                    ExpressItem(
-                        System.currentTimeMillis().toString() + num,
-                        code, name, num,
-                        latestText = latest, latestTime = time, originalName = name
-                    )
+        Store.updateItems(this) { current ->
+            val existing = current.mapTo(HashSet()) { it.mailNo }
+            current + numbers.filterNot { it in existing }.map { num ->
+                ExpressItem(
+                    System.currentTimeMillis().toString() + num,
+                    code, name, num,
+                    latestText = latest, latestTime = time, originalName = name
                 )
             }
-        }
-        if (items.size != Store.items(this).size) {
-            Store.saveItems(this, items)
         }
     }
 

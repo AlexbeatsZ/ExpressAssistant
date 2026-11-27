@@ -195,7 +195,8 @@ object SyncEngine {
             }
         val saved = Store.updateItems(act) { current ->
             val hidden = Store.xiaomiHidden(act).mapTo(HashSet()) { it.mailNo }
-            ManualPackages.retainManualEdits(oldItems, finalSaved, current).filterNot { it.mailNo in hidden }
+            val synced = ManualPackages.retainManualEdits(oldItems, finalSaved, current)
+            (current.filter { it.isSmsPickup } + synced).filterNot { it.mailNo in hidden }
         }
         Log.i(TAG, "merged total=${saved.size} statuses=$statuses")
         Report(statuses, saved.size)

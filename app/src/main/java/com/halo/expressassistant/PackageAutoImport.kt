@@ -63,14 +63,16 @@ object PackageAutoImport {
         }.forEach { enqueueLookup(context, it.mailNo) }
     }
 
-    fun receiveSms(context: Context, content: String): Operation? {
+    fun receiveSms(context: Context, content: String, sentAt: Long): Operation? {
         if (!smsEnabled(context)) return null
-        val candidates = WaybillRules.extract(content, fromSms = true)
-        if (candidates.isEmpty()) return null
+        val candidates = WaybillRules.smsCandidates(content)
+        val (key, values) = if (candidates.waybills.isNotEmpty()) "waybills" to candidates.waybills
+            else "pickup_codes" to candidates.pickupCodes
+        if (values.isEmpty()) return null
         // WorkManager 的 Data 上限为 10 KiB，多段短信按批持久入队。
-        return WorkManager.getInstance(context).enqueue(candidates.chunked(100).map { batch ->
+        return WorkManager.getInstance(context).enqueue(values.chunked(100).map { batch ->
             OneTimeWorkRequestBuilder<SmsPackageImportWorker>()
-                .setInputData(workDataOf("waybills" to batch.toTypedArray())).build()
+                .setInputData(workDataOf(key to batch.toTypedArray(), "sent_at" to sentAt)).build()
         })
     }
 
@@ -120,23 +122,39 @@ class SmsPackageImportWorker(context: Context, params: WorkerParameters) : Corou
             PackageAutoImport.importWaybills(ctx, it.toList())
             return@withContext Result.success()
         }
+        inputData.getStringArray("pickup_codes")?.let {
+            val saved = Store.importSmsPickupCodes(ctx, it.toList(), inputData.getLong("sent_at", 0L))
+            return@withContext if (saved) Result.success() else Result.retry()
+        }
         if (!PackageAutoImport.hasSmsPermission(ctx)) return@withContext Result.success()
         val prefs = ctx.getSharedPreferences(PackageAutoImport.PREFERENCES, Context.MODE_PRIVATE)
         val cursorId = prefs.getLong("sms_cursor", 0)
+        val backfill = !prefs.getBoolean("sms_pickup_backfilled", false)
+        val cutoff = System.currentTimeMillis() - Store.SMS_PICKUP_LOOKBACK
+        val idColumn = Telephony.Sms._ID
+        val dateColumn = Telephony.Sms.DATE
+        val selection = if (backfill) "$idColumn > ? OR $dateColumn >= ?" else "$idColumn > ?"
+        val args = if (backfill) arrayOf(cursorId.toString(), cutoff.toString()) else arrayOf(cursorId.toString())
         try {
             ctx.contentResolver.query(
                 Telephony.Sms.Inbox.CONTENT_URI,
-                arrayOf(Telephony.Sms._ID, Telephony.Sms.BODY),
-                "${Telephony.Sms._ID} > ?", arrayOf(cursorId.toString()), "${Telephony.Sms._ID} ASC"
+                arrayOf(idColumn, Telephony.Sms.BODY, dateColumn, Telephony.Sms.DATE_SENT),
+                selection, args, "$idColumn ASC"
             )?.use { cursor ->
                 while (cursor.moveToNext()) {
                     if (isStopped) return@withContext Result.retry()
                     if (!PackageAutoImport.smsEnabled(ctx)) return@withContext Result.success()
-                    PackageAutoImport.importWaybills(ctx, WaybillRules.extract(cursor.getString(1).orEmpty(), fromSms = true))
-                    if (!prefs.edit().putLong("sms_cursor", cursor.getLong(0)).commit()) return@withContext Result.retry()
+                    val id = cursor.getLong(0)
+                    val candidates = WaybillRules.smsCandidates(cursor.getString(1).orEmpty())
+                    val sentAt = cursor.getLong(3).takeIf { it > 0 } ?: cursor.getLong(2)
+                    if (!Store.importSmsPickupCodes(ctx, candidates.pickupCodes, sentAt)) return@withContext Result.retry()
+                    if (id > cursorId) {
+                        PackageAutoImport.importWaybills(ctx, candidates.waybills)
+                        if (!prefs.edit().putLong("sms_cursor", id).commit()) return@withContext Result.retry()
+                    }
                 }
             } ?: return@withContext Result.retry()
-            Result.success()
+            if (backfill && !prefs.edit().putBoolean("sms_pickup_backfilled", true).commit()) Result.retry() else Result.success()
         } catch (_: SecurityException) { Result.success() }
         catch (e: CancellationException) { throw e }
         catch (_: Exception) { Result.retry() }

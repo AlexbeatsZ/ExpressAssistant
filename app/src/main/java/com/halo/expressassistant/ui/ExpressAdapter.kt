@@ -194,11 +194,12 @@ class ExpressAdapter(
             val goodsTitle = goods?.shortName?.ifBlank { goods?.name }.orEmpty()
             binding.company.text = goodsTitle.ifBlank { item.companyName }
             binding.mailNo.text = item.displayReference()
+            binding.mailNo.visibility = if (item.isSmsPickup) android.view.View.GONE else android.view.View.VISIBLE
             binding.latest.text = item.latestText.ifBlank { "点击查看详情" }
             binding.time.text = item.latestTime
             // 二级菜单（完成/异常）不再外显最末轨迹与时间（含分隔线）；仅在途首页显示
             val showTraceLine = page == PAGE_TRANSPORT
-            binding.latest.visibility = if (showTraceLine) android.view.View.VISIBLE else android.view.View.GONE
+            binding.latest.visibility = if (showTraceLine && !item.isSmsPickup) android.view.View.VISIBLE else android.view.View.GONE
             binding.time.visibility = if (showTraceLine) android.view.View.VISIBLE else android.view.View.GONE
             binding.traceDivider.visibility = if (showTraceLine) android.view.View.VISIBLE else android.view.View.GONE
             binding.reason.text = reasonText(item)

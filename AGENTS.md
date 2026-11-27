@@ -9,6 +9,8 @@
 
 ## Current State
 
+- 2026-11-27：v0.9.19/code33 支持纯取件码短信。授权并开启短信导入后，升级首次补扫近 7 天，新短信继续自动导入。「短信取件」进入待取件，和真实包裹同码时保留包裹详情，短信重放不会恢复已合并的记录。84 单测、lintRelease 零错误（470 警告/1 提示）、Android 16 上 3 项导入集成测试及签名整合包覆盖升级验收通过。本轮验证在隔离模拟器完成，K70 未更新。交付为 `outputs/ExpressAssistant-v0.9.19.apk`，规则见 `docs/design/mobile-navigation.md`。
+
 - 2026-11-24：ROG 源码已迁至 `C:\Users\Meta\source\repos\ExpressAssistant`，持久数据为 `%LOCALAPPDATA%/ExpressAssistantServer/data`；原 SYSTEM 任务、令牌和登录态保留。合并手机端最新记录时保留了迁移启动/停止脚本；服务器执行代码未变，原进程未重启，health200/199条记录。Windows 开机触发尚未重启验收。
 
 - 2026-11-22：v0.9.18/code32已按用户确认的Pixel样式完成登录失效提醒：按账号持久保存明确认证失效，主页提醒卡、设置摘要和账号卡重新登录联动，网络/超时不误报；稳定账号身份与登录代次隔离迟到请求。82单测、lintRelease零错误（470警告/1提示）、隔离Android16模拟器明暗色各3项集成测试通过。个人签名整合APK已覆盖K70并再次冷启动，升级前41件及四平台各1账号全部保留；真实同步无错误、菜鸟在线刷新200，目前无已确认失效提醒。失效/重登恢复在隔离测试账号验证，未故意破坏手机登录。main已推送，v0.9.18正式Release已发布并设Latest，附件172794432字节，与手机安装包相同。最终交付outputs/ExpressAssistant-v0.9.18.apk，私有备份及脱敏验收在outputs/.private/login-status-20261122/。

@@ -89,7 +89,9 @@ class MainActivity : AppCompatActivity() {
         val permissions = com.halo.expressassistant.PackageAutoImport.initialPermissions(this).toMutableList()
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) permissions += Manifest.permission.POST_NOTIFICATIONS
         if (permissions.isNotEmpty()) requestPermissions(permissions.toTypedArray(), 3001)
-        adapter = ExpressAdapter(onClick = { openDetail(it) }, onLongClick = { showPackageSheet(it) })
+        adapter = ExpressAdapter(onClick = { openDetail(it) }, onLongClick = {
+            if (it.isSmsPickup) removeItem(it) else showPackageSheet(it)
+        })
         binding.list.layoutManager = LinearLayoutManager(this)
         binding.list.adapter = adapter
         binding.swipeRefresh.setOnChildScrollUpCallback { _, _ -> binding.list.canScrollVertically(-1) }
@@ -516,13 +518,9 @@ class MainActivity : AppCompatActivity() {
                                 }
                                 Store.saveJdGoods(this@MainActivity, merged)
                             }
-                            val current = Store.items(this@MainActivity).toMutableList()
-                            val known = current.map { it.mailNo }.toSet()
-                            val add = transportBatch.filter { it.mailNo !in known && it.mailNo !in hiddenNos }
-                            if (add.isNotEmpty()) {
-                                current.addAll(add)
-                                Store.saveItems(this@MainActivity, current)
-                                reload()
+                            Store.updateItems(this@MainActivity) { current ->
+                                val known = current.mapTo(HashSet()) { it.mailNo }
+                                current + transportBatch.filter { it.mailNo !in known && it.mailNo !in hiddenNos }
                             }
                         } else {
                             // 完成/异常批：打断语义——本轮在途未收尾则暂不显示（收尾后统一入库并刷新）
@@ -634,21 +632,22 @@ class MainActivity : AppCompatActivity() {
         }
         saveMutex.lock()
         try {
-            val items = Store.items(this@MainActivity).toMutableList()
-            val idx = items.indexOfFirst { it.mailNo == old.mailNo }
-            if (idx < 0) return false
-            items[idx] = items[idx].copy(
-                latestText = newText,
-                latestTime = newTime,
-                notifiedText = notifiedText,
-                notifiedTime = notifiedTime,
-                state = detail.state,
-                eta = com.halo.expressassistant.api.EtaParser.extract(
-                    detail.data.joinToString(" ") { it.context }
-                ).ifBlank { items[idx].eta }
-            )
-            Store.saveItems(this@MainActivity, items)
-            return true
+            val items = Store.updateItems(this@MainActivity) { current ->
+                current.map { item ->
+                    if (item.mailNo != old.mailNo) item else item.copy(
+                        latestText = newText,
+                        latestTime = newTime,
+                        notifiedText = notifiedText,
+                        notifiedTime = notifiedTime,
+                        state = detail.state,
+                        pickupCode = item.pickupCode.ifBlank { GoodsPresentation.pickupCodeFrom(newText).orEmpty() },
+                        eta = com.halo.expressassistant.api.EtaParser.extract(
+                            detail.data.joinToString(" ") { it.context }
+                        ).ifBlank { item.eta }
+                    )
+                }
+            }
+            return items.any { it.mailNo == old.mailNo }
         } finally {
             saveMutex.unlock()
         }
@@ -988,11 +987,9 @@ class MainActivity : AppCompatActivity() {
 
     /** 写回单件指定地址。 */
     private fun setItemAddress(item: ExpressItem, addressId: String) {
-        val items = Store.items(this).map {
-            if (it.mailNo == item.mailNo) it.copy(addressId = addressId)
-            else it
+        Store.updateItems(this) { items ->
+            items.map { if (it.mailNo == item.mailNo) it.copy(addressId = addressId) else it }
         }
-        Store.saveItems(this, items)
         reload()
         Toast.makeText(this, if (addressId.isBlank()) "已切换为全局默认地址" else "已指定地址", Toast.LENGTH_SHORT).show()
     }
@@ -1004,18 +1001,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateTracked(item: ExpressItem, tracked: Boolean) {
         if (tracked) Store.ensurePollingDefault(this)
-        val items = Store.items(this).map {
-            if (it.mailNo == item.mailNo) {
-                if (tracked) {
-                    it.copy(tracked = true, notifiedText = it.latestText, notifiedTime = it.latestTime)
-                } else {
-                    it.copy(tracked = false)
+        Store.updateItems(this) { items ->
+            items.map {
+                when {
+                    it.mailNo != item.mailNo -> it
+                    tracked -> it.copy(tracked = true, notifiedText = it.latestText, notifiedTime = it.latestTime)
+                    else -> it.copy(tracked = false)
                 }
-            } else {
-                it
             }
         }
-        Store.saveItems(this, items)
         android.widget.Toast.makeText(
             this,
             if (tracked) "已开启跟踪，有新动态会通知你" else "已关闭跟踪",
@@ -1068,10 +1062,9 @@ class MainActivity : AppCompatActivity() {
                 setOnClickListener {
                     val name = input.text?.toString()?.trim().orEmpty()
                     if (name.isNotEmpty()) {
-                        val items = Store.items(this@MainActivity).map {
-                            if (it.mailNo == item.mailNo) it.copy(companyName = name) else it
+                        Store.updateItems(this@MainActivity) { items ->
+                            items.map { if (it.mailNo == item.mailNo) it.copy(companyName = name) else it }
                         }
-                        Store.saveItems(this@MainActivity, items)
                         reload()
                         sheet.dismiss()
                     }
@@ -1083,12 +1076,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun removeItem(item: ExpressItem) {
+        val reference = if (item.isSmsPickup) item.pickupLabel() else item.mailNo
         MaterialAlertDialogBuilder(this)
             .setTitle("移除快递")
-            .setMessage("将 ${item.companyName}（${item.mailNo}）移除？可在设置里的“删除快递”中恢复。")
+            .setMessage("将 ${item.companyName}（$reference）移除？可在设置里的“删除快递”中恢复。")
             .setPositiveButton("移除") { _, _ ->
                 Store.updateItems(this) { all ->
-                    Store.addHidden(this, item)
+                    all.firstOrNull { it.mailNo == item.mailNo }?.let { Store.addHidden(this, it) }
                     all.filterNot { it.mailNo == item.mailNo }
                 }
                 reload()

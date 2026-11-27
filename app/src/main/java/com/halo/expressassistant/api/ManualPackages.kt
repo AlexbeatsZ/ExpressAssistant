@@ -62,7 +62,7 @@ object ManualPackages {
             stateName = if (atDepot) "待取件" else when (state) { 3 -> "已签收"; 5 -> "派送中"; 0, 1 -> "运输中"; 4, 6 -> "已退回"; else -> "待更新" },
             receiptConfirmed = state == 3, pickupHint = if (state == 3) "" else item.pickupHint,
             eta = if (state == 3 || atDepot) "" else detail.eta,
-            pickupCode = if (state == 3 || state in setOf(4, 6)) "" else GoodsCode.find(newest.context)
+            pickupCode = if (state == 3 || state in setOf(4, 6)) "" else PickupCodeRules.fromTracking(newest.context).orEmpty()
                 .ifBlank { item.pickupCode.takeIf { atDepot }.orEmpty() }
         )
     }
@@ -116,8 +116,4 @@ object ManualPackages {
             updated.copy(pickupQueryStatus = pickupStatus) to detail else updated to detail
     }
 
-    private object GoodsCode {
-        private val regex = Regex("(取件码|取货码|提货码|自提码|驿站码|取件验证码|取件密码)[:：\\s]*([A-Za-z0-9][A-Za-z0-9-]{1,12})")
-        fun find(text: String) = regex.find(text)?.groupValues?.get(2).orEmpty()
-    }
 }
